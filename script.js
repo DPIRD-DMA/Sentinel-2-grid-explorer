@@ -4,8 +4,8 @@ const CONFIG = {
     pointZoomThreshold: 7, // Show as points below this zoom level
     maxGridsToRender: 10000,
     maxPointsToRender: 50000, // Can show more points than polygons
-    geojsonPath: 'data/sentinel2_grids.geojson',
-    noCoverageAreaPath: 'data/sentinel2_no_coverage.geojson', // Areas WITHOUT S2 coverage
+    geojsonPath: 'data/sentinel-2_grids.geojson',
+    noCoverageAreaPath: 'data/sentinel-2_no_coverage.geojson', // Areas WITHOUT S2 coverage
     mapOptions: {
         center: [-25, 135], // Centre of Australia
         zoom: 5, // Zoom level to show most of Australia
@@ -26,6 +26,7 @@ let noCoverageData = null; // No coverage area data
 let labelPositions = []; // Track label positions for collision detection
 let searchIndex = []; // Search index for grid names
 let highlightLayer = null; // Layer for highlighting searched grids
+let currentBaseLayer = 'satellite'; // Track current base layer
 
 // Initialise map
 function initMap() {
@@ -56,6 +57,12 @@ function initMap() {
 
     // Store reference to layer control for later use
     map.layerControl = layerControl;
+
+    // Add event listeners for base layer changes
+    map.on('baselayerchange', function (e) {
+        currentBaseLayer = e.name.toLowerCase();
+        updateNoCoverageStyle();
+    });
 
     // Add event listeners
     map.on('zoomend moveend', updateGridDisplay);
@@ -135,6 +142,11 @@ function updateGridDisplay() {
         renderGridsAsPoints(visibleGrids);
     } else {
         renderGridsAsPolygons(visibleGrids);
+    }
+
+    // Ensure no-coverage layer stays on top after grid updates
+    if (noCoverageLayer && map.hasLayer(noCoverageLayer)) {
+        noCoverageLayer.bringToFront();
     }
 }
 
@@ -631,6 +643,47 @@ function hideSearchResults() {
     }
 }
 
+// Get no-coverage styling based on current base layer
+function getNoCoverageStyle() {
+    if (currentBaseLayer === 'satellite') {
+        // Lighter styling for satellite view
+        return {
+            color: '#9e9e9e', // Lighter grey outline
+            weight: 1,
+            opacity: 0.9,
+            fillOpacity: 0.5, // Slightly more prominent
+            fillColor: '#bdbdbd' // Much lighter grey fill
+        };
+    } else {
+        // Original darker styling for OSM
+        return {
+            color: '#757575', // Dark grey outline
+            weight: 1,
+            opacity: 0.8,
+            fillOpacity: 0.4,
+            fillColor: '#424242' // Darker grey fill
+        };
+    }
+}
+
+// Update no-coverage layer styling
+function updateNoCoverageStyle() {
+    if (!noCoverageLayer) return;
+
+    // Get the new style
+    const newStyle = getNoCoverageStyle();
+
+    // Apply the style to all layers in the no-coverage layer
+    noCoverageLayer.eachLayer(function (layer) {
+        layer.setStyle(newStyle);
+    });
+
+    // Ensure it stays on top after style update
+    noCoverageLayer.bringToFront();
+
+    console.log(`Updated no-coverage styling for ${currentBaseLayer} view`);
+}
+
 // Load areas WITHOUT Sentinel-2 coverage
 async function loadNoCoverageArea() {
     try {
@@ -656,13 +709,9 @@ function createNoCoverageLayer() {
     if (!noCoverageData) return;
 
     noCoverageLayer = L.geoJSON(noCoverageData, {
-        style: {
-            color: '#757575', // Dark grey outline
-            weight: 1,
-            opacity: 0.8,
-            fillOpacity: 0.4, // More prominent fill to show no-data areas
-            fillColor: '#424242' // Darker grey fill
-        },
+        style: getNoCoverageStyle(),
+        pane: 'overlayPane', // Ensure it's in the overlay pane
+        interactive: true, // Ensure it remains interactive
         onEachFeature: function (feature, layer) {
             // Enhanced tooltip for no-coverage areas that follows the mouse
             const tooltipText = feature.properties?.name ?
@@ -675,13 +724,11 @@ function createNoCoverageLayer() {
                 sticky: true, // Follow the mouse cursor
                 className: 'no-coverage-tooltip'
             });
+
+            // Ensure the layer stays on top when added
+            layer.bringToFront();
         }
     });
-
-    // Set a high z-index to ensure it appears on top of grids
-    if (noCoverageLayer.setZIndex) {
-        noCoverageLayer.setZIndex(1000);
-    }
 
     // Add to layer control if it exists
     if (map.layerControl && noCoverageLayer) {
@@ -690,6 +737,13 @@ function createNoCoverageLayer() {
 
     // Add no-coverage layer to map by default
     noCoverageLayer.addTo(map);
+
+    // Ensure the layer is brought to front after being added
+    setTimeout(() => {
+        if (noCoverageLayer && map.hasLayer(noCoverageLayer)) {
+            noCoverageLayer.bringToFront();
+        }
+    }, 100);
 
     console.log('No-coverage area layer created and added to map');
 }
