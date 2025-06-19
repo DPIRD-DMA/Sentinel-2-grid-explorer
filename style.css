@@ -1,0 +1,250 @@
+/* Reset and base styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Map container */
+#map {
+    height: 100vh;
+    width: 100vw;
+}
+
+/* Loading indicator */
+#loading {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(255, 255, 255, 0.95);
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    text-align: center;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+}
+
+#loading.hidden {
+    display: none;
+}
+
+/* Spinner animation */
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* Zoom info */
+#zoom-info {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    font-size: 0.9rem;
+    color: #666;
+    z-index: 999;
+    pointer-events: none;
+}
+
+#zoom-info.hidden {
+    display: none;
+}
+
+/* Search container */
+#search-container {
+    position: fixed;
+    top: 10px;
+    left: 60px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+#grid-search {
+    width: 250px;
+    padding: 10px 15px;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    background: transparent;
+}
+
+#grid-search::placeholder {
+    color: #999;
+}
+
+#search-results {
+    max-height: 200px;
+    overflow-y: auto;
+    background: white;
+    border-top: 1px solid #eee;
+    display: none;
+}
+
+#search-results.show {
+    display: block;
+}
+
+.search-result {
+    padding: 8px 15px;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background-color 0.2s;
+}
+
+.search-result:hover {
+    background-color: #f8f9fa;
+}
+
+.search-result:last-child {
+    border-bottom: none;
+}
+
+.search-result-name {
+    font-weight: 600;
+    color: #333;
+}
+
+.search-result-info {
+    font-size: 11px;
+    color: #666;
+    margin-top: 2px;
+}
+
+.no-results {
+    padding: 10px 15px;
+    color: #999;
+    font-size: 13px;
+    text-align: center;
+}
+
+#zoom-info.hidden {
+    display: none;
+}
+
+/* Custom Leaflet control styling */
+.leaflet-control-container .leaflet-control {
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 6px;
+}
+
+.leaflet-control-zoom a {
+    color: #333;
+    text-decoration: none;
+}
+
+.leaflet-control-zoom a:hover {
+    background: #f0f0f0;
+}
+
+/* Grid styling */
+.sentinel-grid {
+    fill: none;
+    stroke: #e74c3c;
+    stroke-width: 1;
+    stroke-opacity: 0.7;
+}
+
+.sentinel-grid:hover {
+    stroke-width: 2;
+    stroke-opacity: 1;
+}
+
+/* Grid labels */
+.grid-label {
+    background: none !important;
+    border: none !important;
+    pointer-events: none;
+}
+
+.grid-label span {
+    background: rgba(255, 255, 255, 0.9);
+    color: #333;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    white-space: nowrap;
+    display: inline-block;
+    line-height: 1.2;
+}
+
+.grid-tooltip {
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.no-coverage-tooltip {
+    background: rgba(66, 66, 66, 0.95);
+    color: #ffeb3b;
+    border: 1px solid #757575;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    #loading {
+        padding: 1.5rem;
+        margin: 1rem;
+        width: calc(100% - 2rem);
+        max-width: 300px;
+    }
+
+    #zoom-info {
+        top: 5px;
+        right: 5px;
+        font-size: 0.8rem;
+        padding: 0.5rem 0.75rem;
+    }
+
+    #search-container {
+        left: 10px;
+        top: 60px;
+    }
+
+    #grid-search {
+        width: 200px;
+    }
+}
