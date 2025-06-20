@@ -49,6 +49,22 @@ body {
     animation: spin 1s linear infinite;
 }
 
+.selectable-label {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    cursor: text !important;
+    pointer-events: auto !important;
+    background: rgba(255, 255, 255, 0.8);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-weight: bold;
+    text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.5);
+}
+
+
+
 @keyframes spin {
     0% {
         transform: rotate(0deg);
@@ -182,10 +198,11 @@ body {
 }
 
 /* Grid labels */
+
+/* Grid labels */
 .grid-label {
     background: none !important;
     border: none !important;
-    pointer-events: none;
 }
 
 .grid-label span {
@@ -200,6 +217,31 @@ body {
     white-space: nowrap;
     display: inline-block;
     line-height: 1.2;
+}
+
+.grid-label .selectable-label {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    cursor: text !important;
+    pointer-events: auto !important;
+    background: rgba(255, 255, 255, 0.9) !important;
+    padding: 2px 6px !important;
+    border-radius: 3px !important;
+    font-weight: 600 !important;
+    text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8) !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    white-space: nowrap !important;
+    display: inline-block !important;
+    line-height: 1.2 !important;
+    font-size: 11px !important;
+    color: #333 !important;
+    position: relative;
+    z-index: 1000;
+    /* Create a new stacking context for each label */
+    isolation: isolate;
+    contain: layout style;
 }
 
 .grid-tooltip {

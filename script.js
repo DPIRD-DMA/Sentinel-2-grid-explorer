@@ -2,6 +2,7 @@
 const CONFIG = {
     minZoomForGrids: 4,
     pointZoomThreshold: 7, // Show as points below this zoom level
+    labelZoomThreshold: 8, // NEW: Show labels only at this zoom level and above
     maxGridsToRender: 10000,
     maxPointsToRender: 50000, // Can show more points than polygons
     geojsonPath: 'data/sentinel-2_grids.geojson',
@@ -276,13 +277,17 @@ function renderGridsAsPolygons(grids) {
         }
     }).addTo(map);
 
-    // Add permanent labels
-    addPolygonLabels(grids);
+    // Only add labels if zoom level is high enough
+    const currentZoom = map.getZoom();
+    if (currentZoom >= CONFIG.labelZoomThreshold) {
+        addPolygonLabels(grids);
+    }
 
-    console.log(`Rendered ${grids.length} grids as polygons`);
+    console.log(`Rendered ${grids.length} grids as polygons${currentZoom >= CONFIG.labelZoomThreshold ? ' with labels' : ''}`);
 }
 
-// Add permanent labels for polygons
+// Replace the existing addPolygonLabels function with this updated version:
+
 function addPolygonLabels(grids) {
     const labels = [];
 
@@ -297,10 +302,75 @@ function addPolygonLabels(grids) {
             const label = L.marker([labelPosition.lat, labelPosition.lng], {
                 icon: L.divIcon({
                     className: 'grid-label',
-                    html: `<span>${name}</span>`,
+                    html: `<span class="selectable-label">${name}</span>`,
                     iconSize: [null, null],
                     iconAnchor: [0, 0]
-                })
+                }),
+                interactive: true
+            });
+
+            // Get the actual DOM element after the marker is created
+            label.on('add', function () {
+                const labelElement = label.getElement();
+                if (labelElement) {
+                    const spanElement = labelElement.querySelector('.selectable-label');
+
+                    // Stop all map events from propagating through the label
+                    L.DomEvent.disableClickPropagation(labelElement);
+                    L.DomEvent.disableScrollPropagation(labelElement);
+
+                    // Prevent double-click zoom and handle text selection properly
+                    labelElement.addEventListener('dblclick', function (e) {
+                        L.DomEvent.stopPropagation(e);
+                        L.DomEvent.preventDefault(e);
+
+                        // Clear any existing selections first
+                        if (window.getSelection) {
+                            window.getSelection().removeAllRanges();
+                        }
+
+                        // Select only this label's text
+                        if (spanElement && window.getSelection) {
+                            const range = document.createRange();
+                            range.selectNodeContents(spanElement);
+                            const selection = window.getSelection();
+                            selection.removeAllRanges();
+                            selection.addRange(range);
+                        }
+                    });
+
+                    // Handle single click to select text
+                    labelElement.addEventListener('click', function (e) {
+                        L.DomEvent.stopPropagation(e);
+
+                        // Clear any existing selections
+                        if (window.getSelection) {
+                            window.getSelection().removeAllRanges();
+                        }
+
+                        // Select this label's text
+                        if (spanElement && window.getSelection) {
+                            const range = document.createRange();
+                            range.selectNodeContents(spanElement);
+                            const selection = window.getSelection();
+                            selection.addRange(range);
+                        }
+                    });
+
+                    // Prevent map panning when selecting text
+                    labelElement.addEventListener('mousedown', function (e) {
+                        L.DomEvent.stopPropagation(e);
+                    });
+
+                    labelElement.addEventListener('touchstart', function (e) {
+                        L.DomEvent.stopPropagation(e);
+                    });
+
+                    // Prevent text selection from extending beyond this label
+                    labelElement.addEventListener('selectstart', function (e) {
+                        L.DomEvent.stopPropagation(e);
+                    });
+                }
             });
 
             labels.push(label);
