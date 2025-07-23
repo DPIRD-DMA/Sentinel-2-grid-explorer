@@ -40,7 +40,7 @@ function initMap() {
     });
 
     const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Tiles © Esri — Source: Esri',
+        attribution: 'Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
         maxZoom: 19
     });
 
