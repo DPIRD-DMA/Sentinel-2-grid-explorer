@@ -31,8 +31,7 @@ let highlightHaloLayer = null; // Outer halo for selection
 let highlightCoreLayer = null; // Inner core for selection
 let hoverHighlightLayer = null; // Temporary highlight for hover states
 let currentBaseLayer = 'satellite'; // Track current base layer
-let highlightTimeout = null; // Timeout reference for clearing highlight
-let highlightAnimationFrame = null; // Animation frame for highlight fade
+let activeHighlightMode = null; // Track whether highlight uses polygons or points
 let shareLinkContainer = null;
 let shareLinkInput = null;
 let shareLinkCopyButton = null;
@@ -101,7 +100,6 @@ function initMap() {
 
     // Add event listeners
     map.on('zoomend moveend', updateGridDisplay);
-    map.on('zoomstart', hideZoomInfo);
 
     setupRectangleSelection();
 
@@ -146,11 +144,9 @@ function updateGridDisplay() {
 
     if (zoom < CONFIG.minZoomForGrids) {
         clearGrids();
-        showZoomInfo();
+        refreshHighlightForCurrentZoom();
         return;
     }
-
-    hideZoomInfo();
 
     if (!gridData) return;
 
@@ -171,6 +167,8 @@ function updateGridDisplay() {
     } else {
         renderGridsAsPolygons(visibleGrids);
     }
+
+    refreshHighlightForCurrentZoom();
 
     // Ensure no-coverage layer stays on top after grid updates
     if (noCoverageLayer && map.hasLayer(noCoverageLayer)) {
@@ -340,71 +338,7 @@ function addPolygonLabels(grids) {
                     iconSize: [null, null],
                     iconAnchor: [0, 0]
                 }),
-                interactive: true
-            });
-
-            // Get the actual DOM element after the marker is created
-            label.on('add', function () {
-                const labelElement = label.getElement();
-                if (labelElement) {
-                    const spanElement = labelElement.querySelector('.selectable-label');
-
-                    // Stop all map events from propagating through the label
-                    L.DomEvent.disableClickPropagation(labelElement);
-                    L.DomEvent.disableScrollPropagation(labelElement);
-
-                    // Prevent double-click zoom and handle text selection properly
-                    labelElement.addEventListener('dblclick', function (e) {
-                        L.DomEvent.stopPropagation(e);
-                        L.DomEvent.preventDefault(e);
-
-                        // Clear any existing selections first
-                        if (window.getSelection) {
-                            window.getSelection().removeAllRanges();
-                        }
-
-                        // Select only this label's text
-                        if (spanElement && window.getSelection) {
-                            const range = document.createRange();
-                            range.selectNodeContents(spanElement);
-                            const selection = window.getSelection();
-                            selection.removeAllRanges();
-                            selection.addRange(range);
-                        }
-                    });
-
-                    // Handle single click to select text
-                    labelElement.addEventListener('click', function (e) {
-                        L.DomEvent.stopPropagation(e);
-
-                        // Clear any existing selections
-                        if (window.getSelection) {
-                            window.getSelection().removeAllRanges();
-                        }
-
-                        // Select this label's text
-                        if (spanElement && window.getSelection) {
-                            const range = document.createRange();
-                            range.selectNodeContents(spanElement);
-                            const selection = window.getSelection();
-                            selection.addRange(range);
-                        }
-                    });
-
-                    // Prevent map panning when selecting text
-                    labelElement.addEventListener('mousedown', function (e) {
-                        L.DomEvent.stopPropagation(e);
-                    });
-
-                    labelElement.addEventListener('touchstart', function (e) {
-                        L.DomEvent.stopPropagation(e);
-                    });
-
-                    // Prevent text selection from extending beyond this label
-                    labelElement.addEventListener('selectstart', function (e) {
-                        L.DomEvent.stopPropagation(e);
-                    });
-                }
+                interactive: false
             });
 
             labels.push(label);
@@ -500,7 +434,7 @@ function renderGridsAsPoints(grids) {
 
         marker.on('click', function (event) {
             processGridClick(feature, event, {
-                centerMap: true
+                centerMap: false
             });
         });
 
@@ -510,6 +444,15 @@ function renderGridsAsPoints(grids) {
     gridLayer = L.layerGroup(markers).addTo(map);
 
     // Removed diagnostic logging
+}
+
+function shouldUsePointDisplay() {
+    if (!map) {
+        return false;
+    }
+
+    const currentZoom = map.getZoom();
+    return currentZoom < CONFIG.pointZoomThreshold;
 }
 
 // Calculate polygon centroid
@@ -713,6 +656,48 @@ function zoomToGrid(gridName) {
 }
 
 // Highlight selected grids
+function createCentroidHighlightMarkers(centroid, options = {}) {
+    if (!centroid) {
+        return [];
+    }
+
+    const {
+        haloColor = '#ffffff',
+        coreColor = '#ffff00',
+        haloRadius = 10,
+        coreRadius = 6,
+        haloWeight = 3,
+        coreWeight = 2,
+        pane = 'highlight-pane'
+    } = options;
+
+    const baseOptions = {
+        pane,
+        interactive: false
+    };
+
+    const halo = L.circleMarker([centroid.lat, centroid.lng], {
+        ...baseOptions,
+        radius: haloRadius,
+        color: haloColor,
+        weight: haloWeight,
+        opacity: 0.9,
+        fillOpacity: 0
+    });
+
+    const core = L.circleMarker([centroid.lat, centroid.lng], {
+        ...baseOptions,
+        radius: coreRadius,
+        color: coreColor,
+        weight: coreWeight,
+        opacity: 1,
+        fillOpacity: 0.85,
+        fillColor: coreColor
+    });
+
+    return [halo, core];
+}
+
 function highlightGrids(features, options = {}) {
     clearHighlight();
 
@@ -725,6 +710,37 @@ function highlightGrids(features, options = {}) {
     }
 
     const { flash = false } = options;
+    const usePointHighlight = shouldUsePointDisplay();
+
+    if (usePointHighlight) {
+        const pointLayers = [];
+
+        featureList.forEach(feature => {
+            const centroid = getPolygonCentroid(feature.geometry);
+            if (!centroid) return;
+            pointLayers.push(...createCentroidHighlightMarkers(centroid));
+        });
+
+        if (pointLayers.length === 0) {
+            return;
+        }
+
+        highlightLayer = L.layerGroup(pointLayers).addTo(map);
+        highlightHaloLayer = null;
+        highlightCoreLayer = null;
+        activeHighlightMode = 'points';
+
+        if (highlightLayer && typeof highlightLayer.eachLayer === 'function') {
+            highlightLayer.eachLayer(layer => {
+                if (layer && typeof layer.bringToFront === 'function') {
+                    layer.bringToFront();
+                }
+            });
+        }
+
+        return;
+    }
+
     const haloStyle = {
         color: '#ffffff',
         weight: 8,
@@ -763,6 +779,7 @@ function highlightGrids(features, options = {}) {
     });
 
     highlightLayer = L.layerGroup([highlightHaloLayer, highlightCoreLayer]).addTo(map);
+    activeHighlightMode = 'polygons';
 
     if (highlightLayer && typeof highlightLayer.eachLayer === 'function') {
         highlightLayer.eachLayer(layer => {
@@ -791,21 +808,46 @@ function showHoverHighlight(gridName) {
 
     clearHoverHighlight();
 
-    hoverHighlightLayer = L.geoJSON(entry.feature, {
-        pane: 'highlight-pane',
-        interactive: false,
-        className: 'selection-hover',
-        style: {
-            color: '#ff4d4f',
-            weight: 1.5,
-            opacity: 0.9,
-            fillOpacity: 0.35,
-            fillColor: '#ff4d4f'
-        }
-    }).addTo(map);
+    const usePointHighlight = shouldUsePointDisplay();
 
-    if (hoverHighlightLayer && typeof hoverHighlightLayer.bringToFront === 'function') {
-        hoverHighlightLayer.bringToFront();
+    if (usePointHighlight && entry.centroid) {
+        const pointLayers = createCentroidHighlightMarkers(entry.centroid, {
+            haloColor: '#ffecec',
+            coreColor: '#ff4d4f',
+            haloRadius: 9,
+            coreRadius: 5
+        });
+
+        if (pointLayers.length > 0) {
+            hoverHighlightLayer = L.layerGroup(pointLayers).addTo(map);
+        }
+    }
+
+    if (!hoverHighlightLayer) {
+        hoverHighlightLayer = L.geoJSON(entry.feature, {
+            pane: 'highlight-pane',
+            interactive: false,
+            className: 'selection-hover',
+            style: {
+                color: '#ff4d4f',
+                weight: 1.5,
+                opacity: 0.9,
+                fillOpacity: 0.35,
+                fillColor: '#ff4d4f'
+            }
+        }).addTo(map);
+    }
+
+    if (hoverHighlightLayer) {
+        if (typeof hoverHighlightLayer.bringToFront === 'function') {
+            hoverHighlightLayer.bringToFront();
+        } else if (typeof hoverHighlightLayer.eachLayer === 'function') {
+            hoverHighlightLayer.eachLayer(layer => {
+                if (layer && typeof layer.bringToFront === 'function') {
+                    layer.bringToFront();
+                }
+            });
+        }
     }
 }
 
@@ -816,25 +858,8 @@ function clearHoverHighlight() {
     }
 }
 
-function interpolateColor(colorA, colorB, t) {
-    const clampT = Math.max(0, Math.min(1, t));
-    const components = [0, 1, 2].map(i => {
-        const value = Math.round(colorA[i] + (colorB[i] - colorA[i]) * clampT);
-        return Math.max(0, Math.min(255, value));
-    });
-
-    return `#${components.map(c => c.toString(16).padStart(2, '0')).join('')}`;
-}
-
 // Clear grid highlight
 function clearHighlight() {
-    if (highlightTimeout) {
-        clearTimeout(highlightTimeout);
-        highlightTimeout = null;
-    }
-
-    highlightAnimationFrame = null;
-
     if (highlightLayer) {
         map.removeLayer(highlightLayer);
         highlightLayer = null;
@@ -842,8 +867,34 @@ function clearHighlight() {
 
     highlightHaloLayer = null;
     highlightCoreLayer = null;
+    activeHighlightMode = null;
 
     clearHoverHighlight();
+}
+
+function refreshHighlightForCurrentZoom() {
+    if (!map) {
+        return;
+    }
+
+    if (selectedGridMap.size === 0) {
+        clearHighlight();
+        return;
+    }
+
+    const targetMode = shouldUsePointDisplay() ? 'points' : 'polygons';
+
+    if (highlightLayer && activeHighlightMode === targetMode) {
+        return;
+    }
+
+    const features = getSelectedFeatures();
+    if (features.length === 0) {
+        clearHighlight();
+        return;
+    }
+
+    highlightGrids(features, { flash: false });
 }
 
 function processGridClick(feature, event, overrideOptions = {}) {
@@ -1945,14 +1996,6 @@ function createNoCoverageLayer() {
 // Show/hide UI elements
 function hideLoading() {
     document.getElementById('loading').classList.add('hidden');
-}
-
-function showZoomInfo() {
-    document.getElementById('zoom-info').classList.remove('hidden');
-}
-
-function hideZoomInfo() {
-    document.getElementById('zoom-info').classList.add('hidden');
 }
 
 function showError(message) {
