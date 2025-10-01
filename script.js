@@ -18,6 +18,49 @@ const CONFIG = {
     }
 };
 
+// Detect whether the current device likely uses a coarse pointer (touch-first)
+function isCoarsePointerDevice() {
+    if (typeof window === 'undefined') {
+        return false;
+    }
+
+    if (window.matchMedia) {
+        const coarseMatch = window.matchMedia('(pointer: coarse)');
+        if (coarseMatch && typeof coarseMatch.matches === 'boolean') {
+            return coarseMatch.matches;
+        }
+    }
+
+    const hasTouchPoints = typeof navigator !== 'undefined' && (
+        (typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 0) ||
+        (typeof navigator.msMaxTouchPoints === 'number' && navigator.msMaxTouchPoints > 0)
+    );
+
+    return hasTouchPoints || 'ontouchstart' in window;
+}
+
+function getPointMarkerRadius(zoomLevel) {
+    const zoom = typeof zoomLevel === 'number'
+        ? zoomLevel
+        : (map ? map.getZoom() : CONFIG.mapOptions.zoom);
+
+    const baseRadius = 5 + Math.max(0, zoom - CONFIG.minZoomForGrids);
+    return baseRadius + (isCoarsePointerDevice() ? 2 : 0);
+}
+
+function getPointHighlightDefaults(pointRadius) {
+    const effectiveRadius = typeof pointRadius === 'number'
+        ? pointRadius
+        : getPointMarkerRadius();
+
+    return {
+        haloRadius: Math.round(effectiveRadius + 4),
+        coreRadius: Math.max(Math.round(effectiveRadius * 0.85), Math.round(effectiveRadius - 1)),
+        haloWeight: 3,
+        coreWeight: 2
+    };
+}
+
 // Global variables
 let map = null;
 let gridLayer = null;
@@ -418,6 +461,9 @@ function renderGridsAsPoints(grids) {
 
     if (grids.length === 0) return;
 
+    const currentZoom = map.getZoom();
+    const markerRadius = getPointMarkerRadius(currentZoom);
+
     const markers = grids.map(feature => {
         const centroid = getPolygonCentroid(feature.geometry);
         if (!centroid) return null;
@@ -425,9 +471,9 @@ function renderGridsAsPoints(grids) {
         const name = getGridName(feature);
         const color = getGridColor(name);
         const marker = L.circleMarker([centroid.lat, centroid.lng], {
-            radius: 3,
+            radius: markerRadius,
             color: color,
-            weight: 1,
+            weight: 1.25,
             opacity: 0.8,
             fillOpacity: 0.6,
             fillColor: color
@@ -664,38 +710,40 @@ function createCentroidHighlightMarkers(centroid, options = {}) {
         return [];
     }
 
-    const {
-        haloColor = '#ffffff',
-        coreColor = '#ffff00',
-        haloRadius = 10,
-        coreRadius = 6,
-        haloWeight = 3,
-        coreWeight = 2,
-        pane = 'highlight-pane'
-    } = options;
+    const defaults = {
+        haloColor: '#ffffff',
+        coreColor: '#ffff00',
+        pane: 'highlight-pane',
+        ...getPointHighlightDefaults(getPointMarkerRadius(map ? map.getZoom() : undefined))
+    };
+
+    const settings = {
+        ...defaults,
+        ...options
+    };
 
     const baseOptions = {
-        pane,
+        pane: settings.pane,
         interactive: false
     };
 
     const halo = L.circleMarker([centroid.lat, centroid.lng], {
         ...baseOptions,
-        radius: haloRadius,
-        color: haloColor,
-        weight: haloWeight,
+        radius: settings.haloRadius,
+        color: settings.haloColor,
+        weight: settings.haloWeight,
         opacity: 0.9,
         fillOpacity: 0
     });
 
     const core = L.circleMarker([centroid.lat, centroid.lng], {
         ...baseOptions,
-        radius: coreRadius,
-        color: coreColor,
-        weight: coreWeight,
+        radius: settings.coreRadius,
+        color: settings.coreColor,
+        weight: settings.coreWeight,
         opacity: 1,
         fillOpacity: 0.85,
-        fillColor: coreColor
+        fillColor: settings.coreColor
     });
 
     return [halo, core];
@@ -817,8 +865,8 @@ function showHoverHighlight(gridName) {
         const pointLayers = createCentroidHighlightMarkers(entry.centroid, {
             haloColor: '#ffecec',
             coreColor: '#ff4d4f',
-            haloRadius: 9,
-            coreRadius: 5
+            haloWeight: 2,
+            coreWeight: 2
         });
 
         if (pointLayers.length > 0) {
