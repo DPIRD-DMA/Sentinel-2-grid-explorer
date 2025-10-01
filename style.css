@@ -215,22 +215,25 @@ body {
     box-sizing: border-box;
 }
 
-.share-option:hover {
-    background: #fde8e8;
-    border-color: #f08d8d;
-    color: #7f1d1d;
-}
-
 .share-option.active {
     background: #e4f2ff;
     border-color: #6aa3e6;
     color: #1f2b38;
 }
 
-.share-option.active:hover {
-    background: #fde8e8;
-    border-color: #f08d8d;
-    color: #7f1d1d;
+/* Keep hover styling on devices that support it without triggering red taps on touch */
+@media (hover: hover) {
+    .share-option:hover {
+        background: #fde8e8;
+        border-color: #f08d8d;
+        color: #7f1d1d;
+    }
+
+    .share-option.active:hover {
+        background: #fde8e8;
+        border-color: #f08d8d;
+        color: #7f1d1d;
+    }
 }
 
 .share-option-name {
