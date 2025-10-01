@@ -33,6 +33,24 @@
         <div id="search-results"></div>
     </div>
 
+    <!-- Share link panel -->
+    <div id="share-link-container" class="hidden">
+        <div id="share-link-options" class="hidden"></div>
+        <div id="share-link-input-row">
+            <input id="share-link-input" type="text" readonly>
+            <button id="share-link-copy" type="button">Copy</button>
+        </div>
+        <div class="share-link-actions">
+            <button id="share-clear-selection" type="button" class="danger">Clear selection</button>
+            <button id="share-zoom-selection" type="button">Zoom to selection</button>
+            <span id="share-link-feedback" aria-live="polite"></span>
+        </div>
+        <div class="share-export-actions">
+            <button id="share-download-geojson" type="button">Download GeoJSON</button>
+            <button id="share-download-csv" type="button">Download CSV</button>
+        </div>
+    </div>
+
     <!-- Leaflet JavaScript -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 

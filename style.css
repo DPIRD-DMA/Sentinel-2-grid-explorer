@@ -98,7 +98,7 @@ body {
 #search-container {
     position: fixed;
     top: 10px;
-    left: 60px;
+    left: 55px;
     z-index: 1000;
     background: rgba(255, 255, 255, 0.95);
     border-radius: 6px;
@@ -199,7 +199,223 @@ body {
 
 /* Grid labels */
 
+/* Share link panel */
+#share-link-container {
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    z-index: 1000;
+    width: clamp(280px, 28vw, 320px);
+    background: #ffffff;
+    border: 1px solid #c9ccd3;
+    border-radius: 6px;
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.12);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#share-link-container.hidden {
+    display: none;
+}
+
+#share-link-options {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(68px, 1fr));
+    gap: 6px;
+    max-height: calc((28px * 4) + (6px * 3));
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 6px;
+}
+
+#share-link-options.hidden {
+    display: none;
+}
+
+.share-option {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    border: 1px solid #cfd4db;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #2f3b4a;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+    line-height: 1.1;
+    box-sizing: border-box;
+}
+
+.share-option:hover {
+    background: #fde8e8;
+    border-color: #f08d8d;
+    color: #7f1d1d;
+}
+
+.share-option.active {
+    background: #e4f2ff;
+    border-color: #6aa3e6;
+    color: #1f2b38;
+}
+
+.share-option.active:hover {
+    background: #fde8e8;
+    border-color: #f08d8d;
+    color: #7f1d1d;
+}
+
+.share-option-close {
+    font-size: 12px;
+    line-height: 1;
+    margin-left: 8px;
+    pointer-events: none;
+    color: #7b8899;
+}
+
+.share-option-name {
+    flex: 0 0 auto;
+    text-align: center;
+    white-space: nowrap;
+}
+
+#share-link-options::-webkit-scrollbar {
+    width: 6px;
+}
+
+#share-link-options::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#share-link-options::-webkit-scrollbar-thumb {
+    background: #cfd4db;
+    border-radius: 3px;
+}
+
+#share-link-input-row {
+    display: flex;
+    gap: 8px;
+}
+
+#share-link-input {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid #cfd4db;
+    border-radius: 4px;
+    font-size: 13px;
+    background: #ffffff;
+    color: #1f2b38;
+}
+
+.share-link-actions {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    width: 100%;
+    align-items: stretch;
+}
+
+.share-link-actions button {
+    width: 100%;
+}
+
+#share-link-copy {
+    padding: 6px 12px;
+    border: 1px solid #b8c1cc;
+    border-radius: 4px;
+    background: #f4f6f9;
+    color: #1f2b38;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+#share-link-copy:hover {
+    background: #e8f1ff;
+    border-color: #8fb4e8;
+}
+
+#share-zoom-selection {
+    padding: 6px 12px;
+    border: 1px solid #a9d9b0;
+    border-radius: 4px;
+    background: #e6f7e8;
+    color: #1e5c33;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+#share-zoom-selection:hover {
+    background: #d4efdb;
+    border-color: #6fb781;
+}
+
+#share-clear-selection {
+    padding: 6px 12px;
+    border: 1px solid #f0b6b6;
+    border-radius: 4px;
+    background: #fdecec;
+    color: #8b1d1d;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+#share-clear-selection:hover {
+    background: #fbd5d5;
+    border-color: #f08d8d;
+}
+
+#share-link-feedback {
+    font-size: 12px;
+    color: #5b6575;
+    grid-column: 1 / -1;
+}
+
+#share-link-feedback:empty {
+    display: none;
+}
+
+.share-export-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.share-export-actions button {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #cfd4db;
+    border-radius: 4px;
+    background: #f4f6f9;
+    color: #1f2b38;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.share-export-actions button:hover {
+    background: #e9f1ff;
+    border-color: #8fb4e8;
+}
+
 /* Grid labels */
+.leaflet-pane.highlight-pane .selection-halo path {
+    mix-blend-mode: screen;
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));
+}
+
+.leaflet-pane.highlight-pane .selection-core path {
+    mix-blend-mode: screen;
+}
+
+.leaflet-pane.highlight-pane .selection-hover path {
+    mix-blend-mode: multiply;
+}
+
 .grid-label {
     background: none !important;
     border: none !important;

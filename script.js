@@ -27,11 +27,45 @@ let noCoverageData = null; // No coverage area data
 let labelPositions = []; // Track label positions for collision detection
 let searchIndex = []; // Search index for grid names
 let highlightLayer = null; // Layer for highlighting searched grids
+let highlightHaloLayer = null; // Outer halo for selection
+let highlightCoreLayer = null; // Inner core for selection
+let hoverHighlightLayer = null; // Temporary highlight for hover states
 let currentBaseLayer = 'satellite'; // Track current base layer
+let highlightTimeout = null; // Timeout reference for clearing highlight
+let highlightAnimationFrame = null; // Animation frame for highlight fade
+let shareLinkContainer = null;
+let shareLinkInput = null;
+let shareLinkCopyButton = null;
+let shareLinkFeedback = null;
+let shareLinkFeedbackTimer = null;
+let pendingGridSelection = null;
+let shareLinkOptionsContainer = null;
+let shareDownloadGeoJsonButton = null;
+let shareDownloadCsvButton = null;
+let shareClearSelectionButton = null;
+let shareZoomSelectionButton = null;
+const selectedGridMap = new Map();
+const rectangleSelectState = {
+    active: false,
+    startLatLng: null,
+    lastLatLng: null,
+    rectangle: null,
+    hasMoved: false,
+    draggingWasEnabled: true
+};
 
 // Initialise map
 function initMap() {
     map = L.map('map', CONFIG.mapOptions);
+
+    map.createPane('highlight-pane');
+    const highlightPane = map.getPane('highlight-pane');
+    if (highlightPane) {
+        highlightPane.style.zIndex = 650;
+        highlightPane.style.pointerEvents = 'none';
+    }
+
+    map.boxZoom.disable();
 
     // Add base layers
     const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -69,6 +103,8 @@ function initMap() {
     map.on('zoomend moveend', updateGridDisplay);
     map.on('zoomstart', hideZoomInfo);
 
+    setupRectangleSelection();
+
     // Load grid data and no-coverage areas
     loadGridData();
     loadNoCoverageArea();
@@ -83,15 +119,6 @@ async function loadGridData() {
         }
 
         gridData = await response.json();
-        console.log(`Loaded ${gridData.features.length} grid features`);
-
-        // Debug: log first feature to understand structure
-        if (gridData.features.length > 0) {
-            console.log('Sample feature:', gridData.features[0]);
-            console.log('Sample geometry:', gridData.features[0].geometry);
-            console.log('Sample properties:', gridData.features[0].properties);
-        }
-
         // Initial grid display
         updateGridDisplay();
 
@@ -100,6 +127,9 @@ async function loadGridData() {
 
         // Setup search functionality
         setupSearch();
+
+        // Apply initial selection from URL if available
+        applyPendingGridSelection();
 
         // Hide loading indicator
         hideLoading();
@@ -125,10 +155,7 @@ function updateGridDisplay() {
     if (!gridData) return;
 
     const bounds = map.getBounds();
-    console.log('Current map bounds:', bounds.toString(), 'Zoom:', zoom);
-
     const visibleGrids = getVisibleGrids(bounds);
-    console.log(`Found ${visibleGrids.length} visible grids out of ${gridData.features.length} total`);
 
     // Determine rendering mode based on zoom level
     const showAsPoints = zoom < CONFIG.pointZoomThreshold;
@@ -274,6 +301,13 @@ function renderGridsAsPolygons(grids) {
                 fillOpacity: 0.1,
                 fillColor: color
             };
+        },
+        onEachFeature: function (feature, layer) {
+            layer.on('click', function (event) {
+                processGridClick(feature, event, {
+                    centerMap: false
+                });
+            });
         }
     }).addTo(map);
 
@@ -283,7 +317,7 @@ function renderGridsAsPolygons(grids) {
         addPolygonLabels(grids);
     }
 
-    console.log(`Rendered ${grids.length} grids as polygons${currentZoom >= CONFIG.labelZoomThreshold ? ' with labels' : ''}`);
+    // Removed diagnostic logging
 }
 
 // Replace the existing addPolygonLabels function with this updated version:
@@ -462,12 +496,20 @@ function renderGridsAsPoints(grids) {
             fillColor: color
         });
 
+        marker.feature = feature;
+
+        marker.on('click', function (event) {
+            processGridClick(feature, event, {
+                centerMap: true
+            });
+        });
+
         return marker;
     }).filter(marker => marker !== null);
 
     gridLayer = L.layerGroup(markers).addTo(map);
 
-    console.log(`Rendered ${markers.length} grids as points`);
+    // Removed diagnostic logging
 }
 
 // Calculate polygon centroid
@@ -569,7 +611,7 @@ function buildSearchIndex() {
         };
     }).filter(item => item.centroid !== null);
 
-    console.log(`Built search index with ${searchIndex.length} grids`);
+    // Removed diagnostic logging
 }
 
 // Setup search functionality
@@ -585,7 +627,6 @@ function setupSearch() {
 
         if (query.length === 0) {
             hideSearchResults();
-            clearHighlight();
             return;
         }
 
@@ -604,7 +645,6 @@ function setupSearch() {
         if (e.key === 'Escape') {
             searchInput.value = '';
             hideSearchResults();
-            clearHighlight();
         }
     });
 }
@@ -663,46 +703,1061 @@ function zoomToGrid(gridName) {
     if (!searchItem || !searchItem.centroid) return;
 
     const { lat, lng } = searchItem.centroid;
+    const targetZoom = Math.max(map.getZoom(), 10);
+    map.setView([lat, lng], targetZoom);
 
-    // Zoom to grid location
-    map.setView([lat, lng], 10);
-
-    // Highlight the grid
-    highlightGrid(searchItem.feature);
-
-    // Update search input
-    document.getElementById('grid-search').value = gridName;
+    const searchInput = document.getElementById('grid-search');
+    if (searchInput) {
+        searchInput.value = gridName;
+    }
 }
 
-// Highlight a specific grid
-function highlightGrid(feature) {
+// Highlight selected grids
+function highlightGrids(features, options = {}) {
     clearHighlight();
 
-    const name = getGridName(feature);
-    const color = getGridColor(name);
+    const featureList = Array.isArray(features)
+        ? features.filter(Boolean)
+        : [features].filter(Boolean);
 
-    highlightLayer = L.geoJSON(feature, {
+    if (featureList.length === 0) {
+        return;
+    }
+
+    const { flash = false } = options;
+    const haloStyle = {
+        color: '#ffffff',
+        weight: 8,
+        opacity: 0.7,
+        fillOpacity: 0,
+        fillColor: 'transparent'
+    };
+
+    const coreStyle = {
+        color: '#ffff00',
+        weight: 4,
+        opacity: 1,
+        fillOpacity: 0,
+        fillColor: 'transparent'
+    };
+
+    const geoJsonData = featureList.length === 1
+        ? featureList[0]
+        : {
+            type: 'FeatureCollection',
+            features: featureList
+        };
+
+    highlightHaloLayer = L.geoJSON(geoJsonData, {
+        style: haloStyle,
+        interactive: false,
+        pane: 'highlight-pane',
+        className: 'selection-halo'
+    });
+
+    highlightCoreLayer = L.geoJSON(geoJsonData, {
+        style: coreStyle,
+        interactive: false,
+        pane: 'highlight-pane',
+        className: 'selection-core'
+    });
+
+    highlightLayer = L.layerGroup([highlightHaloLayer, highlightCoreLayer]).addTo(map);
+
+    if (highlightLayer && typeof highlightLayer.eachLayer === 'function') {
+        highlightLayer.eachLayer(layer => {
+            if (layer && typeof layer.bringToFront === 'function') {
+                layer.bringToFront();
+            }
+        });
+    }
+
+    if (flash) {
+        startHighlightFlash(coreStyle);
+    }
+}
+
+function startHighlightFlash(baseStyle) {
+    if (!highlightCoreLayer) return;
+
+    highlightCoreLayer.setStyle(baseStyle);
+}
+
+function showHoverHighlight(gridName) {
+    if (!map || !gridName) return;
+
+    const entry = selectedGridMap.get(gridName.toUpperCase());
+    if (!entry || !entry.feature) return;
+
+    clearHoverHighlight();
+
+    hoverHighlightLayer = L.geoJSON(entry.feature, {
+        pane: 'highlight-pane',
+        interactive: false,
+        className: 'selection-hover',
         style: {
-            color: '#ffff00', // Bright yellow highlight
-            weight: 4,
-            opacity: 1,
-            fillOpacity: 0.3,
-            fillColor: '#ffff00'
+            color: '#ff4d4f',
+            weight: 1.5,
+            opacity: 0.9,
+            fillOpacity: 0.35,
+            fillColor: '#ff4d4f'
         }
     }).addTo(map);
 
-    // Remove highlight after 3 seconds
-    setTimeout(() => {
-        clearHighlight();
-    }, 3000);
+    if (hoverHighlightLayer && typeof hoverHighlightLayer.bringToFront === 'function') {
+        hoverHighlightLayer.bringToFront();
+    }
+}
+
+function clearHoverHighlight() {
+    if (hoverHighlightLayer) {
+        map.removeLayer(hoverHighlightLayer);
+        hoverHighlightLayer = null;
+    }
+}
+
+function interpolateColor(colorA, colorB, t) {
+    const clampT = Math.max(0, Math.min(1, t));
+    const components = [0, 1, 2].map(i => {
+        const value = Math.round(colorA[i] + (colorB[i] - colorA[i]) * clampT);
+        return Math.max(0, Math.min(255, value));
+    });
+
+    return `#${components.map(c => c.toString(16).padStart(2, '0')).join('')}`;
 }
 
 // Clear grid highlight
 function clearHighlight() {
+    if (highlightTimeout) {
+        clearTimeout(highlightTimeout);
+        highlightTimeout = null;
+    }
+
+    highlightAnimationFrame = null;
+
     if (highlightLayer) {
         map.removeLayer(highlightLayer);
         highlightLayer = null;
     }
+
+    highlightHaloLayer = null;
+    highlightCoreLayer = null;
+
+    clearHoverHighlight();
+}
+
+function processGridClick(feature, event, overrideOptions = {}) {
+    if (!feature) return;
+
+    const latlng = event?.latlng || null;
+    const originalEvent = event?.originalEvent || {};
+    const multiSelectMode = Boolean(originalEvent.shiftKey || originalEvent.ctrlKey || originalEvent.metaKey);
+    const hasExistingSelection = selectedGridMap.size > 0;
+
+    let candidates = [];
+
+    if (latlng) {
+        candidates = findGridCandidatesAtLatLng(latlng);
+    }
+
+    const featureName = getGridName(feature);
+    const upperFeatureName = featureName ? featureName.toUpperCase() : null;
+
+    const hasSelectedInCandidates = upperFeatureName && candidates.some(candidate => {
+        const candidateName = getGridName(candidate);
+        return candidateName && candidateName.toUpperCase() === upperFeatureName;
+    });
+
+    if (!hasSelectedInCandidates) {
+        candidates.unshift(feature);
+    }
+
+    const uniqueCandidates = dedupeFeaturesByName(candidates);
+
+    const toggleMode = multiSelectMode && upperFeatureName && selectedGridMap.has(upperFeatureName);
+
+    if (toggleMode) {
+        removeGridFromSelection(upperFeatureName);
+        return;
+    }
+
+    const replaceSelection = overrideOptions.replaceSelection !== undefined
+        ? overrideOptions.replaceSelection
+        : (!multiSelectMode || !hasExistingSelection);
+
+    const focusShareLink = overrideOptions.focusShareLink !== undefined
+        ? overrideOptions.focusShareLink
+        : (!multiSelectMode || !hasExistingSelection);
+
+    const centerMap = overrideOptions.centerMap !== undefined
+        ? overrideOptions.centerMap
+        : (replaceSelection || !hasExistingSelection);
+
+    updateSelection(uniqueCandidates, {
+        replace: replaceSelection,
+        centerMap,
+        flash: overrideOptions.flash !== undefined ? overrideOptions.flash : true,
+        focusShareLink
+    });
+}
+
+function findGridCandidatesAtLatLng(latlng) {
+    if (!latlng || !gridLayer || typeof gridLayer.eachLayer !== 'function') {
+        return [];
+    }
+
+    const candidates = [];
+
+    gridLayer.eachLayer(layer => {
+        const feature = layer.feature;
+        if (!feature || !feature.geometry) return;
+
+        if (isLatLngInFeature(latlng, feature)) {
+            candidates.push(feature);
+        }
+    });
+
+    return candidates;
+}
+
+function isLatLngInFeature(latlng, feature) {
+    if (!feature || !feature.geometry) return false;
+
+    const point = [latlng.lng, latlng.lat];
+    const geometry = feature.geometry;
+
+    if (geometry.type === 'Polygon') {
+        return isPointInPolygon(point, geometry.coordinates);
+    }
+
+    if (geometry.type === 'MultiPolygon') {
+        return geometry.coordinates.some(polygon => isPointInPolygon(point, polygon));
+    }
+
+    return false;
+}
+
+function isPointInPolygon(point, polygon) {
+    if (!polygon || polygon.length === 0) return false;
+
+    const outerRing = polygon[0];
+    if (!isPointInLinearRing(point, outerRing)) {
+        return false;
+    }
+
+    for (let i = 1; i < polygon.length; i++) {
+        if (isPointInLinearRing(point, polygon[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function isPointInLinearRing(point, ring) {
+    if (!ring || ring.length === 0) return false;
+
+    let inside = false;
+
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0];
+        const yi = ring[i][1];
+        const xj = ring[j][0];
+        const yj = ring[j][1];
+
+        const intersects = ((yi > point[1]) !== (yj > point[1])) &&
+            (point[0] < ((xj - xi) * (point[1] - yi)) / ((yj - yi) || 1e-12) + xi);
+
+        if (intersects) {
+            inside = !inside;
+        }
+    }
+
+    return inside;
+}
+
+function dedupeFeaturesByName(features) {
+    if (!Array.isArray(features) || features.length === 0) {
+        return [];
+    }
+
+    const uniqueFeatures = [];
+    const seenNames = new Set();
+
+    features.forEach(feature => {
+        if (!feature) return;
+        const name = getGridName(feature);
+        if (!name) return;
+
+        const upper = name.toUpperCase();
+        if (seenNames.has(upper)) return;
+
+        seenNames.add(upper);
+        uniqueFeatures.push(feature);
+    });
+
+    return uniqueFeatures;
+}
+
+function computeBoundsForFeatures(features) {
+    if (!Array.isArray(features) || features.length === 0) {
+        return null;
+    }
+
+    const bounds = L.latLngBounds();
+    let hasValidCoordinate = false;
+
+    features.forEach(feature => {
+        const geometry = feature?.geometry;
+        const extended = extendBoundsWithGeometry(bounds, geometry);
+
+        if (!extended) {
+            const centroid = getPolygonCentroid(geometry);
+            if (centroid) {
+                bounds.extend([centroid.lat, centroid.lng]);
+                hasValidCoordinate = true;
+            }
+        } else {
+            hasValidCoordinate = true;
+        }
+    });
+
+    return hasValidCoordinate ? bounds : null;
+}
+
+function zoomToSelection() {
+    if (!map) return;
+
+    const features = getSelectedFeatures();
+    if (features.length === 0) {
+        return;
+    }
+
+    const bounds = computeBoundsForFeatures(features);
+    if (bounds && bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [80, 80] });
+    }
+}
+
+function extendBoundsWithGeometry(bounds, geometry) {
+    if (!geometry || !bounds) return false;
+
+    let extended = false;
+
+    const extendCoords = coords => {
+        if (!Array.isArray(coords)) return;
+        coords.forEach(coord => {
+            if (!Array.isArray(coord) || coord.length < 2) return;
+            const lng = coord[0];
+            const lat = coord[1];
+            if (typeof lat === 'number' && typeof lng === 'number') {
+                bounds.extend([lat, lng]);
+                extended = true;
+            }
+        });
+    };
+
+    switch (geometry.type) {
+        case 'Polygon':
+            geometry.coordinates?.forEach(ring => extendCoords(ring));
+            break;
+        case 'MultiPolygon':
+            geometry.coordinates?.forEach(polygon => {
+                polygon?.forEach(ring => extendCoords(ring));
+            });
+            break;
+        case 'LineString':
+            extendCoords(geometry.coordinates);
+            break;
+        case 'MultiLineString':
+            geometry.coordinates?.forEach(line => extendCoords(line));
+            break;
+        case 'Point':
+            extendCoords([geometry.coordinates]);
+            break;
+        case 'MultiPoint':
+            extendCoords(geometry.coordinates);
+            break;
+        case 'GeometryCollection':
+            geometry.geometries?.forEach(child => {
+                if (extendBoundsWithGeometry(bounds, child)) {
+                    extended = true;
+                }
+            });
+            break;
+        default:
+            break;
+    }
+
+    return extended;
+}
+
+function setupRectangleSelection() {
+    if (!map) return;
+
+    const container = map.getContainer();
+
+    map.on('mousedown', onRectangleMouseDown);
+    map.on('mousemove', onRectangleMouseMove);
+    map.on('mouseup', onRectangleMouseUp);
+    container.addEventListener('mouseleave', onRectangleMouseLeave);
+    document.addEventListener('mouseup', onDocumentMouseUp);
+}
+
+function onRectangleMouseDown(event) {
+    if (!event.originalEvent || !event.originalEvent.shiftKey) {
+        return;
+    }
+
+    if (!gridData) {
+        return;
+    }
+
+    event.originalEvent.preventDefault();
+
+    rectangleSelectState.active = true;
+    rectangleSelectState.startLatLng = event.latlng;
+    rectangleSelectState.lastLatLng = event.latlng;
+    rectangleSelectState.hasMoved = false;
+    rectangleSelectState.draggingWasEnabled = typeof map.dragging?.enabled === 'function'
+        ? map.dragging.enabled()
+        : true;
+
+    if (rectangleSelectState.draggingWasEnabled && map.dragging) {
+        map.dragging.disable();
+    }
+
+    map.getContainer().style.cursor = 'crosshair';
+
+    rectangleSelectState.rectangle = L.rectangle(
+        L.latLngBounds(event.latlng, event.latlng),
+        {
+            color: '#3498db',
+            weight: 1,
+            fillOpacity: 0.1,
+            dashArray: '4 2',
+            interactive: false
+        }
+    ).addTo(map);
+}
+
+function onRectangleMouseMove(event) {
+    if (!rectangleSelectState.active || !rectangleSelectState.rectangle) {
+        return;
+    }
+
+    rectangleSelectState.hasMoved = true;
+    rectangleSelectState.lastLatLng = event.latlng;
+    const bounds = L.latLngBounds(rectangleSelectState.startLatLng, event.latlng);
+    rectangleSelectState.rectangle.setBounds(bounds);
+}
+
+function onRectangleMouseUp(event) {
+    if (!rectangleSelectState.active) {
+        return;
+    }
+
+    completeRectangleSelection(event?.latlng || rectangleSelectState.lastLatLng);
+}
+
+function onRectangleMouseLeave() {
+    if (!rectangleSelectState.active) {
+        return;
+    }
+
+    // If the mouse leaves the map container without releasing, keep the shape
+    // but record that we've moved to ensure a selection occurs on document mouseup.
+    rectangleSelectState.hasMoved = true;
+}
+
+function onDocumentMouseUp(event) {
+    if (!rectangleSelectState.active) {
+        return;
+    }
+
+    let latlng = null;
+    try {
+        latlng = map.mouseEventToLatLng(event);
+    } catch (error) {
+        latlng = rectangleSelectState.lastLatLng || rectangleSelectState.startLatLng;
+    }
+
+    completeRectangleSelection(latlng);
+}
+
+function resetRectangleSelection() {
+    const wasDraggingEnabled = rectangleSelectState.draggingWasEnabled;
+
+    if (rectangleSelectState.rectangle) {
+        map.removeLayer(rectangleSelectState.rectangle);
+    }
+
+    rectangleSelectState.active = false;
+    rectangleSelectState.startLatLng = null;
+    rectangleSelectState.lastLatLng = null;
+    rectangleSelectState.rectangle = null;
+    rectangleSelectState.hasMoved = false;
+    rectangleSelectState.draggingWasEnabled = true;
+
+    map.getContainer().style.cursor = '';
+
+    if (map && map.dragging && wasDraggingEnabled) {
+        map.dragging.enable();
+    }
+}
+
+function completeRectangleSelection(finalLatLng) {
+    const hasMoved = rectangleSelectState.hasMoved;
+    const startLatLng = rectangleSelectState.startLatLng;
+
+    resetRectangleSelection();
+
+    if (!hasMoved || !startLatLng || !finalLatLng) {
+        return;
+    }
+
+    const bounds = L.latLngBounds(startLatLng, finalLatLng);
+
+    const selectedFeatures = findFeaturesInBounds(bounds);
+    if (selectedFeatures.length === 0) {
+        return;
+    }
+
+    const replaceSelection = selectedGridMap.size === 0;
+
+    const newFeaturesCount = selectedFeatures.reduce((count, feature) => {
+        const name = getGridName(feature);
+        if (!name) return count;
+        const upper = name.toUpperCase();
+        return count + (replaceSelection || !selectedGridMap.has(upper) ? 1 : 0);
+    }, 0);
+
+    if (!replaceSelection && newFeaturesCount === 0) {
+        return;
+    }
+
+    updateSelection(selectedFeatures, {
+        replace: replaceSelection,
+        centerMap: false,
+        flash: true,
+        focusShareLink: false
+    });
+
+}
+
+function findFeaturesInBounds(bounds) {
+    if (!gridData || !bounds) {
+        return [];
+    }
+
+    const matches = [];
+
+    gridData.features.forEach(feature => {
+        if (!feature || !feature.geometry) return;
+
+        if (doesFeatureIntersectBounds(feature, bounds)) {
+            matches.push(feature);
+        }
+    });
+
+    return dedupeFeaturesByName(matches);
+}
+
+function doesFeatureIntersectBounds(feature, bounds) {
+    if (!feature || !feature.geometry) return false;
+
+    const geometry = feature.geometry;
+
+    if (geometry.type === 'Polygon' && geometry.coordinates?.[0]) {
+        if (isPolygonIntersectingBounds(geometry.coordinates[0], bounds)) {
+            return true;
+        }
+    } else if (geometry.type === 'MultiPolygon') {
+        if (geometry.coordinates.some(polygon => polygon?.[0] && isPolygonIntersectingBounds(polygon[0], bounds))) {
+            return true;
+        }
+    }
+
+    const centroid = getPolygonCentroid(geometry);
+    if (centroid) {
+        return bounds.contains([centroid.lat, centroid.lng]);
+    }
+
+    return false;
+}
+
+// Selection management
+function updateSelection(features, options = {}) {
+    if (!Array.isArray(features) || features.length === 0) {
+        return;
+    }
+
+    const {
+        replace = false,
+        centerMap = true,
+        flash = true,
+        focusShareLink = true
+    } = options;
+
+    if (replace) {
+        selectedGridMap.clear();
+    }
+
+    let addedCount = 0;
+
+    features.forEach(feature => {
+        if (!feature) return;
+
+        const name = getGridName(feature);
+        if (!name) return;
+
+        const upper = name.toUpperCase();
+
+        if (!replace && selectedGridMap.has(upper)) {
+            return;
+        }
+
+        const centroid = getPolygonCentroid(feature.geometry);
+        selectedGridMap.set(upper, {
+            feature,
+            name,
+            centroid
+        });
+        addedCount++;
+    });
+
+    refreshSelectionState({
+        flash: flash && (addedCount > 0 || replace),
+        focusShareLink,
+        centerMap: centerMap && selectedGridMap.size > 0
+    });
+}
+
+function removeGridFromSelection(gridName) {
+    if (!gridName) return;
+
+    const upper = gridName.toUpperCase();
+    if (!selectedGridMap.has(upper)) {
+        return;
+    }
+
+    const entry = selectedGridMap.get(upper);
+    selectedGridMap.delete(upper);
+
+    refreshSelectionState({
+        flash: false,
+        focusShareLink: false,
+        centerMap: false
+    });
+
+    clearHoverHighlight();
+}
+
+function clearSelection(options = {}) {
+    if (selectedGridMap.size === 0) {
+        return;
+    }
+
+    selectedGridMap.clear();
+
+    refreshSelectionState({
+        flash: false,
+        focusShareLink: false,
+        centerMap: false,
+        suppressShareLink: false
+    });
+
+    clearHoverHighlight();
+}
+
+function getSelectedEntries() {
+    return Array.from(selectedGridMap.values());
+}
+
+function getSelectedNamesSorted() {
+    return Array.from(selectedGridMap.values())
+        .map(entry => entry.name)
+        .sort((a, b) => a.localeCompare(b));
+}
+
+function refreshSelectionState(options = {}) {
+    const {
+        flash = true,
+        focusShareLink = true,
+        centerMap = false,
+        suppressShareLink = false
+    } = options;
+
+    const selectionEntries = getSelectedEntries();
+
+    if (selectionEntries.length === 0) {
+        clearHighlight();
+        updateAddressBarWithSelection([]);
+        if (!suppressShareLink) {
+            hideShareLink();
+        }
+        return;
+    }
+
+    if (centerMap && selectionEntries.length > 0) {
+        const primaryEntry = selectionEntries[0];
+        const centroid = primaryEntry?.centroid;
+        if (centroid) {
+            const targetZoom = Math.max(map.getZoom(), 10);
+            map.setView([centroid.lat, centroid.lng], targetZoom);
+        }
+    }
+
+    highlightGrids(selectionEntries.map(entry => entry.feature), { flash });
+
+    const shareUrl = updateAddressBarWithSelection(getSelectedNamesSorted());
+
+    if (!suppressShareLink) {
+        showShareLink(selectionEntries, shareUrl, { focusShareLink });
+    }
+}
+
+function updateAddressBarWithSelection(gridNames) {
+    const namesArray = Array.isArray(gridNames) ? gridNames : [];
+    const upperSorted = [...new Set(namesArray.map(name => name.toUpperCase()))].sort();
+
+    let shareUrl = window.location.href;
+
+    try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('grid');
+        url.searchParams.delete('grids');
+
+        if (upperSorted.length === 1) {
+            url.searchParams.set('grid', upperSorted[0]);
+        } else if (upperSorted.length > 1) {
+            url.searchParams.set('grids', upperSorted.join(','));
+        }
+
+        shareUrl = url.toString();
+
+        if (window.history && window.history.replaceState) {
+            window.history.replaceState({}, '', shareUrl);
+        }
+    } catch (error) {
+        const origin = (window.location.origin && window.location.origin !== 'null')
+            ? window.location.origin
+            : '';
+        const basePath = `${origin}${window.location.pathname}`;
+        const hash = window.location.hash || '';
+
+        let query = '';
+        if (upperSorted.length === 1) {
+            query = `?grid=${encodeURIComponent(upperSorted[0])}`;
+        } else if (upperSorted.length > 1) {
+            query = `?grids=${encodeURIComponent(upperSorted.join(','))}`;
+        }
+
+        shareUrl = `${basePath}${query}${hash}`;
+
+        if (window.history && window.history.replaceState) {
+            window.history.replaceState({}, '', shareUrl);
+        }
+    }
+
+    return shareUrl;
+}
+
+function getSelectedFeatures() {
+    return getSelectedEntries()
+        .map(entry => entry.feature)
+        .filter(feature => !!feature);
+}
+
+function downloadSelectionAsGeoJSON() {
+    const features = getSelectedFeatures();
+    if (features.length === 0) {
+        setShareLinkFeedback('Select grids to export first');
+        return;
+    }
+
+    const featureCollection = {
+        type: 'FeatureCollection',
+        features: features.map(feature => JSON.parse(JSON.stringify(feature)))
+    };
+
+    const filename = buildSelectionFilename('sentinel-grids', 'geojson');
+    triggerDownload(filename, 'application/geo+json', JSON.stringify(featureCollection, null, 2));
+}
+
+function downloadSelectionAsCSV() {
+    const selectionEntries = getSelectedEntries();
+    if (selectionEntries.length === 0) {
+        setShareLinkFeedback('Select grids to export first');
+        return;
+    }
+
+    const propertyKeys = new Set();
+
+    selectionEntries.forEach(entry => {
+        const properties = entry.feature?.properties;
+        if (properties && typeof properties === 'object') {
+            Object.keys(properties).forEach(key => {
+                propertyKeys.add(key);
+            });
+        }
+    });
+
+    const orderedPropertyKeys = Array.from(propertyKeys).sort();
+
+    const headers = ['grid_name', 'centroid_lat', 'centroid_lng', ...orderedPropertyKeys];
+
+    const rows = selectionEntries.map(entry => {
+        const name = entry.name || getGridName(entry.feature) || '';
+        const centroid = entry.centroid || getPolygonCentroid(entry.feature?.geometry) || { lat: '', lng: '' };
+        const properties = entry.feature?.properties || {};
+
+        const baseValues = [name, formatCsvNumber(centroid.lat), formatCsvNumber(centroid.lng)];
+        const propertyValues = orderedPropertyKeys.map(key => {
+            const value = properties[key];
+            if (value === null || value === undefined) return '';
+            if (typeof value === 'object') return JSON.stringify(value);
+            return value;
+        });
+
+        return [...baseValues, ...propertyValues].map(escapeCsvValue).join(',');
+    });
+
+    const csvContent = [headers.map(escapeCsvValue).join(','), ...rows].join('\n');
+    const filename = buildSelectionFilename('sentinel-grids', 'csv');
+    triggerDownload(filename, 'text/csv', csvContent);
+}
+
+function escapeCsvValue(value) {
+    const stringValue = value === null || value === undefined ? '' : String(value);
+    if (/[",\n]/.test(stringValue)) {
+        return '"' + stringValue.replace(/"/g, '""') + '"';
+    }
+    return stringValue;
+}
+
+function formatCsvNumber(num) {
+    if (typeof num !== 'number' || Number.isNaN(num)) {
+        return '';
+    }
+    return num.toFixed(6);
+}
+
+function buildSelectionFilename(base, extension) {
+    const timestamp = new Date().toISOString().replace(/[:T]/g, '-').split('.')[0];
+    return `${base}-selection-${timestamp}.${extension}`;
+}
+
+function triggerDownload(filename, mimeType, content) {
+    try {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (error) {
+        console.error('Failed to trigger download', error);
+        setShareLinkFeedback('Unable to download selection');
+    }
+}
+
+function setupShareLinkUI() {
+    shareLinkContainer = document.getElementById('share-link-container');
+    if (!shareLinkContainer) return;
+
+    shareLinkInput = document.getElementById('share-link-input');
+    shareLinkCopyButton = document.getElementById('share-link-copy');
+    shareLinkFeedback = document.getElementById('share-link-feedback');
+    shareLinkOptionsContainer = document.getElementById('share-link-options');
+    shareDownloadGeoJsonButton = document.getElementById('share-download-geojson');
+    shareDownloadCsvButton = document.getElementById('share-download-csv');
+    shareClearSelectionButton = document.getElementById('share-clear-selection');
+    shareZoomSelectionButton = document.getElementById('share-zoom-selection');
+
+    if (shareLinkCopyButton) {
+        shareLinkCopyButton.addEventListener('click', async function () {
+            if (!shareLinkInput || !shareLinkInput.value) return;
+
+            const supportsClipboard = navigator.clipboard && navigator.clipboard.writeText;
+
+            if (supportsClipboard) {
+                try {
+                    await navigator.clipboard.writeText(shareLinkInput.value);
+                    return;
+                } catch (error) {
+                    // Fall back to manual copy below
+                }
+            }
+
+            shareLinkInput.focus();
+            shareLinkInput.select();
+        });
+    }
+
+    if (shareLinkInput) {
+        shareLinkInput.addEventListener('focus', function () {
+            shareLinkInput.select();
+        });
+    }
+
+    if (shareLinkOptionsContainer) {
+        shareLinkOptionsContainer.addEventListener('click', function (event) {
+            const optionButton = event.target.closest('.share-option');
+            if (!optionButton) return;
+
+            const gridName = optionButton.dataset.grid;
+            if (!gridName) return;
+
+            event.preventDefault();
+            removeGridFromSelection(gridName);
+        });
+
+        shareLinkOptionsContainer.addEventListener('mouseleave', function () {
+            clearHoverHighlight();
+        });
+    }
+
+    if (shareDownloadGeoJsonButton) {
+        shareDownloadGeoJsonButton.addEventListener('click', function () {
+            downloadSelectionAsGeoJSON();
+        });
+    }
+
+    if (shareDownloadCsvButton) {
+        shareDownloadCsvButton.addEventListener('click', function () {
+            downloadSelectionAsCSV();
+        });
+    }
+
+    if (shareClearSelectionButton) {
+        shareClearSelectionButton.addEventListener('click', function () {
+            clearSelection({ silent: false });
+        });
+    }
+
+    if (shareZoomSelectionButton) {
+        shareZoomSelectionButton.addEventListener('click', function () {
+            zoomToSelection();
+        });
+    }
+}
+
+function showShareLink(selectionEntries, shareUrl, options = {}) {
+    if (!shareLinkContainer) return;
+
+    const { focusShareLink = true } = options;
+
+    shareLinkContainer.classList.remove('hidden');
+
+    const count = selectionEntries.length;
+    const primaryName = count === 1 ? selectionEntries[0].name : null;
+
+    if (shareLinkInput) {
+        shareLinkInput.value = shareUrl;
+        const ariaLabel = count === 1
+            ? `Shareable link for grid ${primaryName}`
+            : `Shareable link for ${count} grids`;
+        shareLinkInput.setAttribute('aria-label', ariaLabel);
+    }
+
+    updateShareLinkOptions(selectionEntries);
+
+    if (!focusShareLink) {
+        return;
+    }
+
+    if (count > 1 && shareLinkOptionsContainer) {
+        const firstOption = shareLinkOptionsContainer.querySelector('.share-option');
+        if (firstOption) {
+            firstOption.focus();
+            return;
+        }
+    }
+
+    if (shareLinkInput) {
+        shareLinkInput.focus();
+        shareLinkInput.select();
+    }
+}
+
+function updateShareLinkOptions(selectionEntries) {
+    if (!shareLinkOptionsContainer) return;
+
+    if (!Array.isArray(selectionEntries) || selectionEntries.length === 0) {
+        shareLinkOptionsContainer.innerHTML = '';
+        shareLinkOptionsContainer.classList.add('hidden');
+        return;
+    }
+
+    shareLinkOptionsContainer.classList.remove('hidden');
+
+    const sortedEntries = [...selectionEntries].sort((a, b) => a.name.localeCompare(b.name));
+
+    const optionsHtml = sortedEntries.map(entry => {
+        const upper = entry.name.toUpperCase();
+        return `
+            <button type="button" class="share-option active" data-grid="${upper}" aria-label="Remove grid ${entry.name}">
+                <span class="share-option-name">${entry.name}</span>
+            </button>
+        `;
+    }).join('');
+
+    shareLinkOptionsContainer.innerHTML = optionsHtml;
+
+    shareLinkOptionsContainer.querySelectorAll('.share-option').forEach(button => {
+        button.addEventListener('mouseenter', function () {
+            const gridName = this.dataset.grid;
+            if (gridName) {
+                showHoverHighlight(gridName);
+            }
+        });
+
+        button.addEventListener('mouseleave', function () {
+            clearHoverHighlight();
+        });
+    });
+}
+
+function hideShareLink() {
+    if (shareLinkContainer) {
+        shareLinkContainer.classList.add('hidden');
+    }
+
+    if (shareLinkFeedback) {
+        shareLinkFeedback.textContent = '';
+    }
+
+    if (shareLinkFeedbackTimer) {
+        clearTimeout(shareLinkFeedbackTimer);
+        shareLinkFeedbackTimer = null;
+    }
+}
+
+function setShareLinkFeedback(message) {
+    if (!shareLinkFeedback) return;
+
+    shareLinkFeedback.textContent = message;
+
+    if (shareLinkFeedbackTimer) {
+        clearTimeout(shareLinkFeedbackTimer);
+    }
+
+    if (!message) {
+        shareLinkFeedbackTimer = null;
+        return;
+    }
+
+    shareLinkFeedbackTimer = setTimeout(() => {
+        if (shareLinkFeedback) {
+            shareLinkFeedback.textContent = '';
+        }
+    }, 3000);
 }
 
 // Hide search results
@@ -711,6 +1766,80 @@ function hideSearchResults() {
     if (searchResults) {
         searchResults.classList.remove('show');
     }
+}
+
+function getGridParamsFromUrl() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const gridsParam = params.get('grids');
+        const gridParam = params.get('grid');
+
+        const names = [];
+
+        if (gridsParam) {
+            gridsParam.split(',').forEach(name => {
+                const trimmed = name.trim();
+                if (trimmed.length > 0) {
+                    names.push(trimmed.toUpperCase());
+                }
+            });
+        }
+
+        if (gridParam) {
+            const trimmed = gridParam.trim();
+            if (trimmed.length > 0) {
+                names.push(trimmed.toUpperCase());
+            }
+        }
+
+        const uniqueNames = [...new Set(names)];
+        return uniqueNames.length > 0 ? uniqueNames : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function applyPendingGridSelection() {
+    if (!Array.isArray(pendingGridSelection) || pendingGridSelection.length === 0) {
+        return;
+    }
+
+    if (!Array.isArray(searchIndex) || searchIndex.length === 0) {
+        return;
+    }
+
+    const matches = pendingGridSelection.map(name => {
+        const match = searchIndex.find(item => item.name === name);
+        if (!match) {
+            console.warn(`Grid from URL not found: ${name}`);
+        }
+        return match;
+    }).filter(Boolean);
+
+    if (matches.length === 0) {
+        pendingGridSelection = null;
+        return;
+    }
+
+    const features = matches.map(item => item.feature);
+
+    setTimeout(() => {
+        updateSelection(features, {
+            replace: true,
+            centerMap: false,
+            flash: true,
+            focusShareLink: false
+        });
+
+        if (map) {
+            const bounds = computeBoundsForFeatures(features);
+            if (bounds && bounds.isValid()) {
+                map.fitBounds(bounds, { padding: [80, 80] });
+            }
+        }
+    }, 200);
+
+    pendingGridSelection = null;
 }
 
 // Get no-coverage styling based on current base layer
@@ -750,8 +1879,6 @@ function updateNoCoverageStyle() {
 
     // Ensure it stays on top after style update
     noCoverageLayer.bringToFront();
-
-    console.log(`Updated no-coverage styling for ${currentBaseLayer} view`);
 }
 
 // Load areas WITHOUT Sentinel-2 coverage
@@ -764,7 +1891,6 @@ async function loadNoCoverageArea() {
         }
 
         noCoverageData = await response.json();
-        console.log(`Loaded Sentinel-2 no-coverage areas with ${noCoverageData.features?.length || 1} features`);
 
         // Create no-coverage layer
         createNoCoverageLayer();
@@ -802,7 +1928,7 @@ function createNoCoverageLayer() {
 
     // Add to layer control if it exists
     if (map.layerControl && noCoverageLayer) {
-        map.layerControl.addOverlay(noCoverageLayer, 'No S2 Coverage Areas');
+        map.layerControl.addOverlay(noCoverageLayer, 'Coverage Areas');
     }
 
     // Add no-coverage layer to map by default
@@ -814,8 +1940,6 @@ function createNoCoverageLayer() {
             noCoverageLayer.bringToFront();
         }
     }, 100);
-
-    console.log('No-coverage area layer created and added to map');
 }
 
 // Show/hide UI elements
@@ -865,6 +1989,9 @@ function setupEventListeners() {
 
 // Initialise when DOM is ready
 document.addEventListener('DOMContentLoaded', function () {
+    setupShareLinkUI();
+    pendingGridSelection = getGridParamsFromUrl();
+
     initMap();
 
     // Replace event listeners with debounced versions after initial load
