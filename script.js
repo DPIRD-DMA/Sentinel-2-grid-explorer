@@ -938,9 +938,9 @@ function processGridClick(feature, event, overrideOptions = {}) {
 
         const upper = name.toUpperCase();
         if (selectedGridMap.has(upper)) {
-            namesToRemove.push(name);
+            namesToRemove.push(upper);
         } else {
-            featuresToAdd.push(candidate);
+            featuresToAdd.push({ feature: candidate, name, upper });
         }
     });
 
@@ -948,25 +948,54 @@ function processGridClick(feature, event, overrideOptions = {}) {
         return;
     }
 
+    let mutated = false;
+
     if (namesToRemove.length > 0) {
-        namesToRemove.forEach(name => {
-            removeGridFromSelection(name);
+        namesToRemove.forEach(upper => {
+            if (selectedGridMap.has(upper)) {
+                selectedGridMap.delete(upper);
+                mutated = true;
+            }
         });
     }
 
-    if (featuresToAdd.length === 0) {
+    if (featuresToAdd.length > 0) {
+        featuresToAdd.forEach(entry => {
+            if (selectedGridMap.has(entry.upper)) {
+                return;
+            }
+            const centroid = getPolygonCentroid(entry.feature.geometry);
+            selectedGridMap.set(entry.upper, {
+                feature: entry.feature,
+                name: entry.name,
+                centroid
+            });
+            mutated = true;
+        });
+    }
+
+    if (!mutated) {
         return;
     }
 
-    updateSelection(featuresToAdd, {
-        replace: false,
-        centerMap: overrideOptions.centerMap !== undefined
-            ? overrideOptions.centerMap
-            : (selectionSizeBeforeToggle === 0),
-        flash: overrideOptions.flash !== undefined ? overrideOptions.flash : true,
-        focusShareLink: overrideOptions.focusShareLink !== undefined
-            ? overrideOptions.focusShareLink
-            : false
+    clearHoverHighlight();
+
+    const centerMap = overrideOptions.centerMap !== undefined
+        ? overrideOptions.centerMap
+        : (selectionSizeBeforeToggle === 0 && selectedGridMap.size > 0);
+
+    const focusShareLink = overrideOptions.focusShareLink !== undefined
+        ? overrideOptions.focusShareLink
+        : false;
+
+    const flash = overrideOptions.flash !== undefined
+        ? overrideOptions.flash
+        : (featuresToAdd.length > 0);
+
+    refreshSelectionState({
+        flash,
+        focusShareLink,
+        centerMap
     });
 }
 
