@@ -79,7 +79,7 @@ body {
 #search-container {
     position: fixed;
     top: 10px;
-    left: 55px;
+    left: 10px;
     z-index: 1000;
     background: rgba(255, 255, 255, 0.95);
     border-radius: 6px;
@@ -88,7 +88,8 @@ body {
 }
 
 #grid-search {
-    width: 250px;
+    width: 260px;
+    max-width: calc(100vw - 40px);
     padding: 10px 15px;
     border: none;
     outline: none;
@@ -169,7 +170,7 @@ body {
     bottom: 10px;
     left: 10px;
     z-index: 1000;
-    width: clamp(280px, 28vw, 320px);
+    width: min(320px, calc(100vw - 20px));
     background: #ffffff;
     border: 1px solid #c9ccd3;
     border-radius: 6px;
@@ -258,6 +259,7 @@ body {
 
 #share-link-input {
     flex: 1;
+    min-width: 0;
     padding: 8px 10px;
     border: 1px solid #cfd4db;
     border-radius: 4px;
@@ -438,10 +440,17 @@ body {
 
     #search-container {
         left: 10px;
-        top: 60px;
+        top: 10px;
+        width: auto;
+        max-width: calc(100vw - 20px);
     }
 
     #grid-search {
-        width: 200px;
+        width: clamp(180px, 60vw, 220px);
+        max-width: calc(100vw - 40px);
+    }
+
+    #share-link-options {
+        grid-template-columns: repeat(3, minmax(68px, 1fr));
     }
 }

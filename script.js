@@ -13,7 +13,8 @@ const CONFIG = {
         maxZoom: 18,
         minZoom: 4,
         worldCopyJump: true, // Enable world wrapping
-        maxBounds: [[-90, -Infinity], [90, Infinity]] // Allow infinite horizontal scrolling
+        maxBounds: [[-90, -Infinity], [90, Infinity]], // Allow infinite horizontal scrolling
+        zoomControl: false
     }
 };
 
@@ -52,6 +53,8 @@ const rectangleSelectState = {
     hasMoved: false,
     draggingWasEnabled: true
 };
+let suppressNextGridClick = false;
+let suppressNextGridClickTimer = null;
 
 // Initialise map
 function initMap() {
@@ -900,55 +903,70 @@ function refreshHighlightForCurrentZoom() {
 function processGridClick(feature, event, overrideOptions = {}) {
     if (!feature) return;
 
-    const latlng = event?.latlng || null;
-    const originalEvent = event?.originalEvent || {};
-    const multiSelectMode = Boolean(originalEvent.shiftKey || originalEvent.ctrlKey || originalEvent.metaKey);
-    const hasExistingSelection = selectedGridMap.size > 0;
-
-    let candidates = [];
-
-    if (latlng) {
-        candidates = findGridCandidatesAtLatLng(latlng);
+    if (suppressNextGridClick) {
+        suppressNextGridClick = false;
+        if (suppressNextGridClickTimer) {
+            clearTimeout(suppressNextGridClickTimer);
+            suppressNextGridClickTimer = null;
+        }
+        return;
     }
 
-    const featureName = getGridName(feature);
-    const upperFeatureName = featureName ? featureName.toUpperCase() : null;
+    const latlng = event?.latlng || null;
+    const candidates = latlng
+        ? findGridCandidatesAtLatLng(latlng)
+        : [];
 
-    const hasSelectedInCandidates = upperFeatureName && candidates.some(candidate => {
-        const candidateName = getGridName(candidate);
-        return candidateName && candidateName.toUpperCase() === upperFeatureName;
-    });
-
-    if (!hasSelectedInCandidates) {
+    if (!candidates.some(candidate => candidate === feature)) {
         candidates.unshift(feature);
     }
 
     const uniqueCandidates = dedupeFeaturesByName(candidates);
-
-    const toggleMode = multiSelectMode && upperFeatureName && selectedGridMap.has(upperFeatureName);
-
-    if (toggleMode) {
-        removeGridFromSelection(upperFeatureName);
+    if (uniqueCandidates.length === 0) {
         return;
     }
 
-    const replaceSelection = overrideOptions.replaceSelection !== undefined
-        ? overrideOptions.replaceSelection
-        : (!multiSelectMode || !hasExistingSelection);
+    const selectionSizeBeforeToggle = selectedGridMap.size;
+    const namesToRemove = [];
+    const featuresToAdd = [];
 
-    const focusShareLink = overrideOptions.focusShareLink !== undefined
-        ? overrideOptions.focusShareLink
-        : (!multiSelectMode || !hasExistingSelection);
+    uniqueCandidates.forEach(candidate => {
+        const name = getGridName(candidate);
+        if (!name) {
+            return;
+        }
 
-    const centerMap = overrideOptions.centerMap !== undefined
-        ? overrideOptions.centerMap
-        : (replaceSelection || !hasExistingSelection);
+        const upper = name.toUpperCase();
+        if (selectedGridMap.has(upper)) {
+            namesToRemove.push(name);
+        } else {
+            featuresToAdd.push(candidate);
+        }
+    });
 
-    updateSelection(uniqueCandidates, {
-        replace: replaceSelection,
-        centerMap,
+    if (namesToRemove.length === 0 && featuresToAdd.length === 0) {
+        return;
+    }
+
+    if (namesToRemove.length > 0) {
+        namesToRemove.forEach(name => {
+            removeGridFromSelection(name);
+        });
+    }
+
+    if (featuresToAdd.length === 0) {
+        return;
+    }
+
+    updateSelection(featuresToAdd, {
+        replace: false,
+        centerMap: overrideOptions.centerMap !== undefined
+            ? overrideOptions.centerMap
+            : (selectionSizeBeforeToggle === 0),
         flash: overrideOptions.flash !== undefined ? overrideOptions.flash : true,
-        focusShareLink
+        focusShareLink: overrideOptions.focusShareLink !== undefined
+            ? overrideOptions.focusShareLink
+            : false
     });
 }
 
@@ -1263,6 +1281,10 @@ function completeRectangleSelection(finalLatLng) {
 
     resetRectangleSelection();
 
+    if (hasMoved) {
+        scheduleSuppressNextGridClick();
+    }
+
     if (!hasMoved || !startLatLng || !finalLatLng) {
         return;
     }
@@ -1294,6 +1316,17 @@ function completeRectangleSelection(finalLatLng) {
         focusShareLink: false
     });
 
+}
+
+function scheduleSuppressNextGridClick() {
+    suppressNextGridClick = true;
+    if (suppressNextGridClickTimer) {
+        clearTimeout(suppressNextGridClickTimer);
+    }
+    suppressNextGridClickTimer = setTimeout(() => {
+        suppressNextGridClick = false;
+        suppressNextGridClickTimer = null;
+    }, 250);
 }
 
 function findFeaturesInBounds(bounds) {
