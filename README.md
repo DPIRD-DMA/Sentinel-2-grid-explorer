@@ -9,15 +9,16 @@ Interactive web map for exploring Sentinel-2 satellite tile grids worldwide.
 
 ## Features
 
-- Interactive map of Sentinel-2 grid tiles
-- Search grids by name
-- Colour-coded UTM columns
-- Coverage area display
-- Satellite and OpenStreetMap base layers
+- Interactive Leaflet map with Sentinel-2 tile boundaries and no-coverage overlay
+- Click-to-toggle grid selection plus shift-drag rectangle selection for bulk picking
+- Smart colouring of UTM columns for quick visual differentiation
+- Built-in search box with instant filtering of grid IDs
+- Share panel with copyable URLs, zoom-to-selection, and GeoJSON/CSV exports
+- Switchable OpenStreetMap and satellite basemaps with responsive UI
 
 ## Usage
 
-Search for grid names (e.g., "01CCV") or explore the map to view Sentinel-2 tile boundaries and coverage areas.
+Use the search box to jump to a grid (e.g. `01CCV`) or pan/zoom the map to explore tiles. Click tiles—or shift+drag a rectangle—to build a selection, then open the share panel to copy a link, download the selection, or zoom to it.
 
 ## License
 
