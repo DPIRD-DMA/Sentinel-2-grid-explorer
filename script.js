@@ -2190,17 +2190,7 @@ function createNoCoverageLayer() {
         pane: 'overlayPane', // Ensure it's in the overlay pane
         interactive: true, // Ensure it remains interactive
         onEachFeature: function (feature, layer) {
-            // Enhanced tooltip for no-coverage areas that follows the mouse
-            const tooltipText = feature.properties?.name ?
-                `No S2 Coverage: ${feature.properties.name}` :
-                'No Sentinel-2 Data Available';
-
-            layer.bindTooltip(tooltipText, {
-                permanent: false,
-                direction: 'auto', // Auto-position based on cursor location
-                sticky: true, // Follow the mouse cursor
-                className: 'no-coverage-tooltip'
-            });
+            layer.on('click', handleNoCoverageLayerClick);
 
             // Ensure the layer stays on top when added
             layer.bringToFront();
@@ -2221,6 +2211,21 @@ function createNoCoverageLayer() {
             noCoverageLayer.bringToFront();
         }
     }, 100);
+}
+
+function handleNoCoverageLayerClick(event) {
+    if (!event || !event.latlng) {
+        return;
+    }
+
+    const candidates = findGridCandidatesAtLatLng(event.latlng);
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+        return;
+    }
+
+    processGridClick(candidates[0], event, {
+        centerMap: false
+    });
 }
 
 // Show/hide UI elements
