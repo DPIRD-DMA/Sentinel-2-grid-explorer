@@ -1,10 +1,8 @@
 // Configuration
 const CONFIG = {
     minZoomForGrids: 4,
-    pointZoomThreshold: 7, // Show as points below this zoom level
     labelZoomThreshold: 8, // NEW: Show labels only at this zoom level and above
-    maxGridsToRender: 10000,
-    maxPointsToRender: 50000, // Can show more points than polygons
+    maxGridsToRender: 60000,
     geojsonPath: 'data/sentinel-2_grids.geojson',
     noCoverageAreaPath: 'data/sentinel-2_no_coverage.geojson', // Areas WITHOUT S2 coverage
     mapOptions: {
@@ -17,6 +15,10 @@ const CONFIG = {
         zoomControl: false
     }
 };
+
+const polygonRenderer = L.canvas({ padding: 0.5 });
+
+function logShareDebug() {}
 
 // Detect whether the current device likely uses a coarse pointer (touch-first)
 function isCoarsePointerDevice() {
@@ -39,31 +41,9 @@ function isCoarsePointerDevice() {
     return hasTouchPoints || 'ontouchstart' in window;
 }
 
-function getPointMarkerRadius(zoomLevel) {
-    const zoom = typeof zoomLevel === 'number'
-        ? zoomLevel
-        : (map ? map.getZoom() : CONFIG.mapOptions.zoom);
-
-    const baseRadius = 5 + Math.max(0, zoom - CONFIG.minZoomForGrids);
-    return baseRadius + (isCoarsePointerDevice() ? 2 : 0);
-}
-
-function getPointHighlightDefaults(pointRadius) {
-    const effectiveRadius = typeof pointRadius === 'number'
-        ? pointRadius
-        : getPointMarkerRadius();
-
-    return {
-        haloRadius: Math.round(effectiveRadius + 4),
-        coreRadius: Math.max(Math.round(effectiveRadius * 0.85), Math.round(effectiveRadius - 1)),
-        haloWeight: 3,
-        coreWeight: 2
-    };
-}
-
 // Global variables
 let map = null;
-let gridLayer = null;
+let polygonLayer = null;
 let labelLayer = null;
 let noCoverageLayer = null; // Layer for areas WITHOUT S2 coverage
 let gridData = null;
@@ -75,7 +55,7 @@ let highlightHaloLayer = null; // Outer halo for selection
 let highlightCoreLayer = null; // Inner core for selection
 let hoverHighlightLayer = null; // Temporary highlight for hover states
 let currentBaseLayer = 'satellite'; // Track current base layer
-let activeHighlightMode = null; // Track whether highlight uses polygons or points
+let activeHighlightMode = null; // Track current highlight render mode
 let shareLinkContainer = null;
 let shareLinkInput = null;
 let shareLinkCopyButton = null;
@@ -88,6 +68,8 @@ let shareDownloadCsvButton = null;
 let shareClearSelectionButton = null;
 let shareZoomSelectionButton = null;
 const selectedGridMap = new Map();
+let activeMoveStartTime = null;
+let activeZoomStartTime = null;
 const rectangleSelectState = {
     active: false,
     startLatLng: null,
@@ -147,6 +129,32 @@ function initMap() {
     // Add event listeners
     map.on('zoomend moveend', updateGridDisplay);
 
+    map.on('movestart', () => {
+        activeMoveStartTime = performance.now();
+        logShareDebug('map event: movestart');
+    });
+
+    map.on('moveend', () => {
+        const duration = activeMoveStartTime !== null ? performance.now() - activeMoveStartTime : null;
+        logShareDebug('map event: moveend', {
+            durationMs: duration !== null ? Number(duration.toFixed(2)) : null
+        });
+        activeMoveStartTime = null;
+    });
+
+    map.on('zoomstart', () => {
+        activeZoomStartTime = performance.now();
+        logShareDebug('map event: zoomstart');
+    });
+
+    map.on('zoomend', () => {
+        const duration = activeZoomStartTime !== null ? performance.now() - activeZoomStartTime : null;
+        logShareDebug('map event: zoomend', {
+            durationMs: duration !== null ? Number(duration.toFixed(2)) : null
+        });
+        activeZoomStartTime = null;
+    });
+
     setupRectangleSelection();
 
     // Load grid data and no-coverage areas
@@ -157,12 +165,16 @@ function initMap() {
 // Load GeoJSON data
 async function loadGridData() {
     try {
+        logShareDebug('loadGridData: fetching grid data', { path: CONFIG.geojsonPath });
         const response = await fetch(CONFIG.geojsonPath);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         gridData = await response.json();
+        logShareDebug('loadGridData: data loaded', {
+            featureCount: Array.isArray(gridData?.features) ? gridData.features.length : null
+        });
         // Initial grid display
         updateGridDisplay();
 
@@ -179,16 +191,18 @@ async function loadGridData() {
         hideLoading();
 
     } catch (error) {
-        console.error('Error loading grid data:', error);
+        logShareDebug('loadGridData: failed to load grid data', { message: error?.message });
         showError('Failed to load Sentinel-2 grid data. Please check the file path.');
     }
 }
 
 // Update grid display based on zoom and bounds
 function updateGridDisplay() {
+    const start = performance.now();
     const zoom = map.getZoom();
 
     if (zoom < CONFIG.minZoomForGrids) {
+        logShareDebug('updateGridDisplay: below min zoom', { zoom });
         clearGrids();
         refreshHighlightForCurrentZoom();
         return;
@@ -197,22 +211,28 @@ function updateGridDisplay() {
     if (!gridData) return;
 
     const bounds = map.getBounds();
+    logShareDebug('updateGridDisplay: begin', {
+        zoom,
+        bounds: {
+            north: bounds.getNorth(),
+            south: bounds.getSouth(),
+            west: bounds.getWest(),
+            east: bounds.getEast()
+        }
+    });
     const visibleGrids = getVisibleGrids(bounds);
+    const visibleCount = visibleGrids.length;
 
     // Determine rendering mode based on zoom level
-    const showAsPoints = zoom < CONFIG.pointZoomThreshold;
-    const maxToRender = showAsPoints ? CONFIG.maxPointsToRender : CONFIG.maxGridsToRender;
+    const maxToRender = Number.isFinite(CONFIG.maxGridsToRender)
+        ? CONFIG.maxGridsToRender
+        : Infinity;
 
-    if (visibleGrids.length > maxToRender) {
-        console.warn(`Too many grids to render: ${visibleGrids.length}. Limiting to ${maxToRender}`);
+    if (visibleCount > maxToRender && Number.isFinite(maxToRender)) {
         visibleGrids.splice(maxToRender);
     }
 
-    if (showAsPoints) {
-        renderGridsAsPoints(visibleGrids);
-    } else {
-        renderGridsAsPolygons(visibleGrids);
-    }
+    renderGridsAsPolygons(visibleGrids);
 
     refreshHighlightForCurrentZoom();
 
@@ -220,11 +240,19 @@ function updateGridDisplay() {
     if (noCoverageLayer && map.hasLayer(noCoverageLayer)) {
         noCoverageLayer.bringToFront();
     }
+
+    const duration = performance.now() - start;
+    logShareDebug('updateGridDisplay: complete', {
+        zoom,
+        visibleCount,
+        durationMs: Number(duration.toFixed(2))
+    });
 }
 
 // Get grids within current map bounds (with world wrapping)
 function getVisibleGrids(bounds) {
     const visibleGrids = [];
+    const start = performance.now();
 
     // Get the wrapped bounds to handle world repetition
     const wrappedBounds = getWrappedBounds(bounds);
@@ -253,6 +281,12 @@ function getVisibleGrids(bounds) {
         }
     });
 
+    const duration = performance.now() - start;
+    logShareDebug('getVisibleGrids: finished', {
+        visibleCount: visibleGrids.length,
+        wrappedBoundsCount: wrappedBounds.length,
+        durationMs: Number(duration.toFixed(2))
+    });
     return visibleGrids;
 }
 
@@ -327,14 +361,81 @@ function isPolygonIntersectingBounds(coords, bounds) {
 
 // Render grids as polygons (high zoom)
 function renderGridsAsPolygons(grids) {
-    clearGrids();
+    const start = performance.now();
 
-    if (grids.length === 0) return;
+    if (!Array.isArray(grids) || grids.length === 0) {
+        clearPolygonLayer();
+        destroyLabelLayer();
+        return logShareDebug('renderGridsAsPolygons: no grids to render');
+    }
 
-    // Reset label collision tracking
+    ensurePolygonLayer();
+
+    const clearStart = performance.now();
+    polygonLayer.clearLayers();
+    logShareDebug('renderGridsAsPolygons: cleared layer', {
+        durationMs: Number((performance.now() - clearStart).toFixed(2))
+    });
+
     labelPositions = [];
 
-    gridLayer = L.geoJSON(grids, {
+    const addStart = performance.now();
+    polygonLayer.addData(grids);
+    logShareDebug('renderGridsAsPolygons: data added', {
+        count: grids.length,
+        durationMs: Number((performance.now() - addStart).toFixed(2))
+    });
+
+    if (map.getZoom() >= CONFIG.labelZoomThreshold) {
+        addPolygonLabels(grids);
+    } else {
+        destroyLabelLayer();
+    }
+
+    logShareDebug('renderGridsAsPolygons: complete', {
+        count: grids.length,
+        durationMs: Number((performance.now() - start).toFixed(2))
+    });
+}
+
+function clearPolygonLayer() {
+    if (!polygonLayer) {
+        return;
+    }
+
+    if (typeof polygonLayer.clearLayers === 'function') {
+        const clearStart = performance.now();
+        polygonLayer.clearLayers();
+        logShareDebug('clearPolygonLayer: cleared existing layers', {
+            durationMs: Number((performance.now() - clearStart).toFixed(2))
+        });
+    }
+
+    if (map.hasLayer(polygonLayer)) {
+        const removeStart = performance.now();
+        map.removeLayer(polygonLayer);
+        logShareDebug('clearPolygonLayer: removed layer', {
+            durationMs: Number((performance.now() - removeStart).toFixed(2))
+        });
+    }
+
+    polygonLayer = null;
+}
+
+function ensurePolygonLayer() {
+    if (polygonLayer && typeof polygonLayer.clearLayers === 'function' && typeof polygonLayer.addData === 'function') {
+        if (!map.hasLayer(polygonLayer)) {
+            polygonLayer.addTo(map);
+            logShareDebug('ensurePolygonLayer: re-added existing layer');
+        }
+        return;
+    }
+
+    clearPolygonLayer();
+
+    polygonLayer = L.geoJSON(null, {
+        renderer: polygonRenderer,
+        smoothFactor: 0.2,
         style: function (feature) {
             const name = getGridName(feature);
             const color = getGridColor(name);
@@ -355,26 +456,82 @@ function renderGridsAsPolygons(grids) {
         }
     }).addTo(map);
 
-    // Only add labels if zoom level is high enough
-    const currentZoom = map.getZoom();
-    if (currentZoom >= CONFIG.labelZoomThreshold) {
-        addPolygonLabels(grids);
+    logShareDebug('ensurePolygonLayer: created layer');
+
+}
+
+function ensureLabelLayer() {
+    if (labelLayer && typeof labelLayer.clearLayers === 'function') {
+        if (!map.hasLayer(labelLayer)) {
+            labelLayer.addTo(map);
+            logShareDebug('ensureLabelLayer: re-added label layer');
+        }
+        return;
     }
 
-    // Removed diagnostic logging
+    destroyLabelLayer();
+    labelLayer = L.layerGroup().addTo(map);
+    logShareDebug('ensureLabelLayer: created label layer');
+}
+
+function clearLabelLayer() {
+    if (!labelLayer || typeof labelLayer.clearLayers !== 'function') {
+        return;
+    }
+
+    const clearStart = performance.now();
+    labelLayer.clearLayers();
+    labelPositions = [];
+    logShareDebug('clearLabelLayer: cleared label features', {
+        durationMs: Number((performance.now() - clearStart).toFixed(2))
+    });
+}
+
+function destroyLabelLayer() {
+    if (!labelLayer) {
+        labelPositions = [];
+        return;
+    }
+
+    clearLabelLayer();
+
+    if (map.hasLayer(labelLayer)) {
+        const removeStart = performance.now();
+        map.removeLayer(labelLayer);
+        logShareDebug('destroyLabelLayer: removed label layer', {
+            durationMs: Number((performance.now() - removeStart).toFixed(2))
+        });
+    }
+
+    labelLayer = null;
+    labelPositions = [];
 }
 
 // Replace the existing addPolygonLabels function with this updated version:
 
 function addPolygonLabels(grids) {
+    const start = performance.now();
+    ensureLabelLayer();
+    clearLabelLayer();
+
     const labels = [];
+    const labelDebugStats = {
+        requested: grids.length,
+        placed: 0,
+        skipped: 0,
+        offsetAttempts: 0,
+        collisionChecks: 0,
+        totalPlacementTimeMs: 0,
+        maxPlacementTimeMs: 0,
+        findCalls: 0
+    };
 
     grids.forEach(feature => {
         const centroid = getPolygonCentroid(feature.geometry);
         if (!centroid) return;
 
         const name = getGridName(feature);
-        const labelPosition = findNonOverlappingPosition(centroid, name);
+        const labelPosition = findNonOverlappingPosition(centroid, name, labelDebugStats);
 
         if (labelPosition) {
             const label = L.marker([labelPosition.lat, labelPosition.lng], {
@@ -396,16 +553,36 @@ function addPolygonLabels(grids) {
                 width: name.length * 8, // Estimate label width
                 height: 16
             });
+            labelDebugStats.placed += 1;
+        } else {
+            labelDebugStats.skipped += 1;
         }
     });
 
     if (labels.length > 0) {
-        labelLayer = L.layerGroup(labels).addTo(map);
+        labels.forEach(label => labelLayer.addLayer(label));
     }
+
+    const duration = performance.now() - start;
+    const averagePlacementMs = labelDebugStats.findCalls > 0
+        ? labelDebugStats.totalPlacementTimeMs / labelDebugStats.findCalls
+        : 0;
+
+    logShareDebug('addPolygonLabels: complete', {
+        requested: labelDebugStats.requested,
+        placed: labelDebugStats.placed,
+        skipped: labelDebugStats.skipped,
+        offsetAttempts: labelDebugStats.offsetAttempts,
+        collisionChecks: labelDebugStats.collisionChecks,
+        averagePlacementMs: Number(averagePlacementMs.toFixed(2)),
+        maxPlacementMs: Number(labelDebugStats.maxPlacementTimeMs.toFixed(2)),
+        durationMs: Number(duration.toFixed(2))
+    });
 }
 
 // Find position for label that doesn't overlap with existing labels
-function findNonOverlappingPosition(centroid, text) {
+function findNonOverlappingPosition(centroid, text, debugStats) {
+    const start = performance.now();
     const textWidth = text.length * 8; // Rough estimate
     const textHeight = 16;
     const minDistance = 20; // Minimum pixels between labels
@@ -427,6 +604,9 @@ function findNonOverlappingPosition(centroid, text) {
     ];
 
     for (const offset of offsets) {
+        if (debugStats) {
+            debugStats.offsetAttempts += 1;
+        }
         const testPixel = {
             x: centerPixel.x + offset.x,
             y: centerPixel.y + offset.y
@@ -443,65 +623,33 @@ function findNonOverlappingPosition(centroid, text) {
                 Math.pow(testPixel.y - existingPixel.y, 2)
             );
 
+            if (debugStats) {
+                debugStats.collisionChecks += 1;
+            }
+
             return distance < minDistance + (textWidth + existing.width) / 4;
         });
 
         if (!collides) {
+            if (debugStats) {
+                const elapsed = performance.now() - start;
+                debugStats.totalPlacementTimeMs += elapsed;
+                debugStats.maxPlacementTimeMs = Math.max(debugStats.maxPlacementTimeMs, elapsed);
+                debugStats.findCalls += 1;
+            }
             return testLatLng;
         }
     }
 
-    // If no non-overlapping position found, don't show label
-    return null;
-}
-
-// Render grids as points (low zoom)
-function renderGridsAsPoints(grids) {
-    clearGrids();
-
-    if (grids.length === 0) return;
-
-    const currentZoom = map.getZoom();
-    const markerRadius = getPointMarkerRadius(currentZoom);
-
-    const markers = grids.map(feature => {
-        const centroid = getPolygonCentroid(feature.geometry);
-        if (!centroid) return null;
-
-        const name = getGridName(feature);
-        const color = getGridColor(name);
-        const marker = L.circleMarker([centroid.lat, centroid.lng], {
-            radius: markerRadius,
-            color: color,
-            weight: 1.25,
-            opacity: 0.8,
-            fillOpacity: 0.6,
-            fillColor: color
-        });
-
-        marker.feature = feature;
-
-        marker.on('click', function (event) {
-            processGridClick(feature, event, {
-                centerMap: false
-            });
-        });
-
-        return marker;
-    }).filter(marker => marker !== null);
-
-    gridLayer = L.layerGroup(markers).addTo(map);
-
-    // Removed diagnostic logging
-}
-
-function shouldUsePointDisplay() {
-    if (!map) {
-        return false;
+    if (debugStats) {
+        const elapsed = performance.now() - start;
+        debugStats.totalPlacementTimeMs += elapsed;
+        debugStats.maxPlacementTimeMs = Math.max(debugStats.maxPlacementTimeMs, elapsed);
+        debugStats.findCalls += 1;
     }
 
-    const currentZoom = map.getZoom();
-    return currentZoom < CONFIG.pointZoomThreshold;
+    // If no non-overlapping position found, don't show label
+    return null;
 }
 
 // Calculate polygon centroid
@@ -578,16 +726,17 @@ function getGridColor(gridName) {
 }
 
 // Clear existing grids and labels
-function clearGrids() {
-    if (gridLayer) {
-        map.removeLayer(gridLayer);
-        gridLayer = null;
+function clearGrids(options = {}) {
+    const { skipLabelLayer = false } = options;
+    const start = performance.now();
+    clearPolygonLayer();
+    if (!skipLabelLayer) {
+        destroyLabelLayer();
     }
-    if (labelLayer) {
-        map.removeLayer(labelLayer);
-        labelLayer = null;
-    }
-    labelPositions = [];
+    const duration = performance.now() - start;
+    logShareDebug('clearGrids: complete', {
+        durationMs: Number(duration.toFixed(2))
+    });
 }
 
 // Build search index for quick grid lookup
@@ -603,7 +752,9 @@ function buildSearchIndex() {
         };
     }).filter(item => item.centroid !== null);
 
-    // Removed diagnostic logging
+    logShareDebug('buildSearchIndex: completed', {
+        entryCount: Array.isArray(searchIndex) ? searchIndex.length : 0
+    });
 }
 
 // Setup search functionality
@@ -704,51 +855,6 @@ function zoomToGrid(gridName) {
     }
 }
 
-// Highlight selected grids
-function createCentroidHighlightMarkers(centroid, options = {}) {
-    if (!centroid) {
-        return [];
-    }
-
-    const defaults = {
-        haloColor: '#ffffff',
-        coreColor: '#ffff00',
-        pane: 'highlight-pane',
-        ...getPointHighlightDefaults(getPointMarkerRadius(map ? map.getZoom() : undefined))
-    };
-
-    const settings = {
-        ...defaults,
-        ...options
-    };
-
-    const baseOptions = {
-        pane: settings.pane,
-        interactive: false
-    };
-
-    const halo = L.circleMarker([centroid.lat, centroid.lng], {
-        ...baseOptions,
-        radius: settings.haloRadius,
-        color: settings.haloColor,
-        weight: settings.haloWeight,
-        opacity: 0.9,
-        fillOpacity: 0
-    });
-
-    const core = L.circleMarker([centroid.lat, centroid.lng], {
-        ...baseOptions,
-        radius: settings.coreRadius,
-        color: settings.coreColor,
-        weight: settings.coreWeight,
-        opacity: 1,
-        fillOpacity: 0.85,
-        fillColor: settings.coreColor
-    });
-
-    return [halo, core];
-}
-
 function highlightGrids(features, options = {}) {
     clearHighlight();
 
@@ -760,37 +866,8 @@ function highlightGrids(features, options = {}) {
         return;
     }
 
+    const start = performance.now();
     const { flash = false } = options;
-    const usePointHighlight = shouldUsePointDisplay();
-
-    if (usePointHighlight) {
-        const pointLayers = [];
-
-        featureList.forEach(feature => {
-            const centroid = getPolygonCentroid(feature.geometry);
-            if (!centroid) return;
-            pointLayers.push(...createCentroidHighlightMarkers(centroid));
-        });
-
-        if (pointLayers.length === 0) {
-            return;
-        }
-
-        highlightLayer = L.layerGroup(pointLayers).addTo(map);
-        highlightHaloLayer = null;
-        highlightCoreLayer = null;
-        activeHighlightMode = 'points';
-
-        if (highlightLayer && typeof highlightLayer.eachLayer === 'function') {
-            highlightLayer.eachLayer(layer => {
-                if (layer && typeof layer.bringToFront === 'function') {
-                    layer.bringToFront();
-                }
-            });
-        }
-
-        return;
-    }
 
     const haloStyle = {
         color: '#ffffff',
@@ -843,6 +920,14 @@ function highlightGrids(features, options = {}) {
     if (flash) {
         startHighlightFlash(coreStyle);
     }
+
+    const duration = performance.now() - start;
+    logShareDebug('highlightGrids: complete', {
+        featureCount: featureList.length,
+        mode: activeHighlightMode,
+        durationMs: Number(duration.toFixed(2)),
+        flash
+    });
 }
 
 function startHighlightFlash(baseStyle) {
@@ -859,35 +944,18 @@ function showHoverHighlight(gridName) {
 
     clearHoverHighlight();
 
-    const usePointHighlight = shouldUsePointDisplay();
-
-    if (usePointHighlight && entry.centroid) {
-        const pointLayers = createCentroidHighlightMarkers(entry.centroid, {
-            haloColor: '#ffecec',
-            coreColor: '#ff4d4f',
-            haloWeight: 2,
-            coreWeight: 2
-        });
-
-        if (pointLayers.length > 0) {
-            hoverHighlightLayer = L.layerGroup(pointLayers).addTo(map);
+    hoverHighlightLayer = L.geoJSON(entry.feature, {
+        pane: 'highlight-pane',
+        interactive: false,
+        className: 'selection-hover',
+        style: {
+            color: '#ff4d4f',
+            weight: 1.5,
+            opacity: 0.9,
+            fillOpacity: 0.35,
+            fillColor: '#ff4d4f'
         }
-    }
-
-    if (!hoverHighlightLayer) {
-        hoverHighlightLayer = L.geoJSON(entry.feature, {
-            pane: 'highlight-pane',
-            interactive: false,
-            className: 'selection-hover',
-            style: {
-                color: '#ff4d4f',
-                weight: 1.5,
-                opacity: 0.9,
-                fillOpacity: 0.35,
-                fillColor: '#ff4d4f'
-            }
-        }).addTo(map);
-    }
+    }).addTo(map);
 
     if (hoverHighlightLayer) {
         if (typeof hoverHighlightLayer.bringToFront === 'function') {
@@ -933,9 +1001,14 @@ function refreshHighlightForCurrentZoom() {
         return;
     }
 
-    const targetMode = shouldUsePointDisplay() ? 'points' : 'polygons';
-
-    if (highlightLayer && activeHighlightMode === targetMode) {
+    if (highlightLayer && activeHighlightMode === 'polygons') {
+        if (typeof highlightLayer.eachLayer === 'function') {
+            highlightLayer.eachLayer(layer => {
+                if (layer && typeof layer.bringToFront === 'function') {
+                    layer.bringToFront();
+                }
+            });
+        }
         return;
     }
 
@@ -1048,13 +1121,13 @@ function processGridClick(feature, event, overrideOptions = {}) {
 }
 
 function findGridCandidatesAtLatLng(latlng) {
-    if (!latlng || !gridLayer || typeof gridLayer.eachLayer !== 'function') {
+    if (!latlng || !polygonLayer || typeof polygonLayer.eachLayer !== 'function') {
         return [];
     }
 
     const candidates = [];
 
-    gridLayer.eachLayer(layer => {
+    polygonLayer.eachLayer(layer => {
         const feature = layer.feature;
         if (!feature || !feature.geometry) return;
 
@@ -1457,8 +1530,20 @@ function updateSelection(features, options = {}) {
         replace = false,
         centerMap = true,
         flash = true,
-        focusShareLink = true
+        focusShareLink = true,
+        debugSource = null
     } = options;
+
+    if (debugSource) {
+        logShareDebug('updateSelection: invoked', {
+            debugSource,
+            featureCount: features.length,
+            replace,
+            centerMap,
+            flash,
+            focusShareLink
+        });
+    }
 
     if (replace) {
         selectedGridMap.clear();
@@ -1492,6 +1577,14 @@ function updateSelection(features, options = {}) {
         focusShareLink,
         centerMap: centerMap && selectedGridMap.size > 0
     });
+
+    if (debugSource) {
+        logShareDebug('updateSelection: selection refreshed', {
+            debugSource,
+            addedCount,
+            totalSelected: selectedGridMap.size
+        });
+    }
 }
 
 function removeGridFromSelection(gridName) {
@@ -1723,7 +1816,6 @@ function triggerDownload(filename, mimeType, content) {
 
         setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (error) {
-        console.error('Failed to trigger download', error);
         setShareLinkFeedback('Unable to download selection');
     }
 }
@@ -1931,6 +2023,8 @@ function hideSearchResults() {
 
 function getGridParamsFromUrl() {
     try {
+        const search = window.location.search || '';
+        logShareDebug('getGridParamsFromUrl: parsing search params', { search });
         const params = new URLSearchParams(window.location.search);
         const gridsParam = params.get('grids');
         const gridParam = params.get('grid');
@@ -1953,53 +2047,80 @@ function getGridParamsFromUrl() {
             }
         }
 
+        logShareDebug('getGridParamsFromUrl: extracted raw names', { names: [...names] });
         const uniqueNames = [...new Set(names)];
+        logShareDebug('getGridParamsFromUrl: unique names', { uniqueNames });
         return uniqueNames.length > 0 ? uniqueNames : null;
     } catch (error) {
+        logShareDebug('getGridParamsFromUrl: failed to parse params', { message: error?.message });
         return null;
     }
 }
 
 function applyPendingGridSelection() {
     if (!Array.isArray(pendingGridSelection) || pendingGridSelection.length === 0) {
+        logShareDebug('applyPendingGridSelection: no pending selection to apply');
         return;
     }
 
     if (!Array.isArray(searchIndex) || searchIndex.length === 0) {
+        logShareDebug('applyPendingGridSelection: search index not ready yet', {
+            pendingCount: pendingGridSelection.length
+        });
         return;
     }
 
+    logShareDebug('applyPendingGridSelection: attempting to match pending grids', {
+        pending: [...pendingGridSelection],
+        searchIndexSize: searchIndex.length
+    });
     const matches = pendingGridSelection.map(name => {
         const match = searchIndex.find(item => item.name === name);
         if (!match) {
-            console.warn(`Grid from URL not found: ${name}`);
+            logShareDebug('applyPendingGridSelection: grid not found in search index', { name });
         }
         return match;
     }).filter(Boolean);
 
     if (matches.length === 0) {
+        logShareDebug('applyPendingGridSelection: no matches found, clearing pending selection');
         pendingGridSelection = null;
         return;
     }
 
     const features = matches.map(item => item.feature);
+    logShareDebug('applyPendingGridSelection: matched features', {
+        matchCount: matches.length,
+        featureNames: matches.map(item => item.name)
+    });
 
     setTimeout(() => {
+        logShareDebug('applyPendingGridSelection: invoking updateSelection', {
+            featureCount: features.length,
+            replace: true
+        });
         updateSelection(features, {
             replace: true,
             centerMap: false,
             flash: true,
-            focusShareLink: false
+            focusShareLink: false,
+            debugSource: 'share-link'
         });
 
         if (map) {
             const bounds = computeBoundsForFeatures(features);
             if (bounds && bounds.isValid()) {
                 map.fitBounds(bounds, { padding: [80, 80] });
+                logShareDebug('applyPendingGridSelection: map.fitBounds executed', {
+                    padding: [80, 80]
+                });
+            } else {
+                logShareDebug('applyPendingGridSelection: bounds invalid or unavailable');
             }
         }
     }, 200);
 
+    logShareDebug('applyPendingGridSelection: scheduled selection application');
     pendingGridSelection = null;
 }
 
@@ -2047,7 +2168,6 @@ async function loadNoCoverageArea() {
     try {
         const response = await fetch(CONFIG.noCoverageAreaPath);
         if (!response.ok) {
-            console.warn('No-coverage area file not found, continuing without it');
             return;
         }
 
@@ -2057,7 +2177,7 @@ async function loadNoCoverageArea() {
         createNoCoverageLayer();
 
     } catch (error) {
-        console.warn('Failed to load no-coverage area:', error);
+        logShareDebug('loadNoCoverageArea: failed', { message: error?.message });
     }
 }
 
@@ -2144,6 +2264,11 @@ function setupEventListeners() {
 document.addEventListener('DOMContentLoaded', function () {
     setupShareLinkUI();
     pendingGridSelection = getGridParamsFromUrl();
+    logShareDebug('DOMContentLoaded: initial share link state', {
+        href: window.location.href,
+        pendingGridSelection,
+        hasPending: Array.isArray(pendingGridSelection) && pendingGridSelection.length > 0
+    });
 
     initMap();
 
