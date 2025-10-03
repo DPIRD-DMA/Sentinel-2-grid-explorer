@@ -5,6 +5,7 @@ const CONFIG = {
     maxGridsToRender: 60000,
     geojsonPath: 'data/sentinel-2_grids.geojson',
     noCoverageAreaPath: 'data/sentinel-2_no_coverage.geojson', // Areas WITHOUT S2 coverage
+    githubRepoUrl: 'https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer',
     mapOptions: {
         center: [0, 0], // Start centred on the globe
         zoom: 3, // Begin zoomed out for a global overview
@@ -120,6 +121,8 @@ function initMap() {
     // Store reference to layer control for later use
     map.layerControl = layerControl;
 
+    addGitHubControl();
+
     // Add event listeners for base layer changes
     map.on('baselayerchange', function (e) {
         currentBaseLayer = e.name.toLowerCase();
@@ -160,6 +163,30 @@ function initMap() {
     // Load grid data and no-coverage areas
     loadGridData();
     loadNoCoverageArea();
+}
+
+function addGitHubControl() {
+    if (!map || !CONFIG.githubRepoUrl) {
+        return;
+    }
+
+    const GitHubControl = L.Control.extend({
+        options: { position: 'topright' },
+        onAdd: function () {
+            const container = L.DomUtil.create('div', 'leaflet-control leaflet-bar github-control');
+            const link = L.DomUtil.create('a', 'github-control__link', container);
+            link.href = CONFIG.githubRepoUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.title = 'Open Sentinel-2 Grid Explorer on GitHub';
+            link.setAttribute('aria-label', 'Open Sentinel-2 Grid Explorer on GitHub');
+            link.innerHTML = '<svg class="github-control__icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.7 7.7 0 012-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.94-.01 2.21 0 .21.15.45.55.38A8 8 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>';
+            L.DomEvent.disableClickPropagation(container);
+            return container;
+        }
+    });
+
+    map.addControl(new GitHubControl());
 }
 
 // Load GeoJSON data

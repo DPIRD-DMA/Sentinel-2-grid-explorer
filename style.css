@@ -17,6 +17,44 @@ body {
     width: 100vw;
 }
 
+.github-control {
+    margin: 10px 10px 0 0;
+    border: none;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+.leaflet-bar.github-control .github-control__link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    color: #5b6575;
+    background: rgba(255, 255, 255, 0.95);
+    text-decoration: none;
+    border-radius: 4px;
+    line-height: 1;
+}
+
+.leaflet-bar.github-control .github-control__link:hover,
+.leaflet-bar.github-control .github-control__link:focus {
+    background: #e9f1ff;
+    color: #0f172a;
+}
+
+.leaflet-bar.github-control .github-control__link:focus {
+    outline: 2px solid #4f83ff;
+    outline-offset: 2px;
+}
+
+.github-control__icon {
+    width: 22px;
+    height: 22px;
+    display: block;
+    fill: currentColor;
+}
+
 /* Loading indicator */
 #loading {
     position: fixed;
