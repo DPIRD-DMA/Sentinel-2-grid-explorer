@@ -1781,9 +1781,11 @@ function downloadSelectionAsCSV() {
         }
     });
 
-    const orderedPropertyKeys = Array.from(propertyKeys).sort();
+    const orderedPropertyKeys = Array.from(propertyKeys)
+        .filter(key => typeof key === 'string' && key.toLowerCase() !== 'name')
+        .sort();
 
-    const headers = ['grid_name', 'centroid_lat', 'centroid_lng', ...orderedPropertyKeys];
+    const headers = ['name', 'centroid_lat', 'centroid_lng', ...orderedPropertyKeys];
 
     const rows = selectionEntries.map(entry => {
         const name = entry.name || getGridName(entry.feature) || '';
@@ -1802,7 +1804,7 @@ function downloadSelectionAsCSV() {
     });
 
     const csvContent = [headers.map(escapeCsvValue).join(','), ...rows].join('\n');
-    const filename = buildSelectionFilename('sentinel-grids', 'csv');
+    const filename = buildSelectionFilename('sentinel-2-grid-tile', 'csv');
     triggerDownload(filename, 'text/csv', csvContent);
 }
 
