@@ -1,15 +1,15 @@
 // Configuration
 const CONFIG = {
-    minZoomForGrids: 4,
+    minZoomForGrids: 3,
     labelZoomThreshold: 8, // NEW: Show labels only at this zoom level and above
     maxGridsToRender: 60000,
     geojsonPath: 'data/sentinel-2_grids.geojson',
     noCoverageAreaPath: 'data/sentinel-2_no_coverage.geojson', // Areas WITHOUT S2 coverage
     mapOptions: {
-        center: [-25, 135], // Centre of Australia
-        zoom: 5, // Zoom level to show most of Australia
-        maxZoom: 18,
-        minZoom: 4,
+        center: [0, 0], // Start centred on the globe
+        zoom: 3, // Begin zoomed out for a global overview
+        maxZoom: 17,
+        minZoom: 3,
         worldCopyJump: true, // Enable world wrapping
         maxBounds: [[-90, -Infinity], [90, Infinity]], // Allow infinite horizontal scrolling
         zoomControl: false
@@ -18,7 +18,7 @@ const CONFIG = {
 
 const polygonRenderer = L.canvas({ padding: 0.5 });
 
-function logShareDebug() {}
+function logShareDebug() { }
 
 // Detect whether the current device likely uses a coarse pointer (touch-first)
 function isCoarsePointerDevice() {
@@ -97,12 +97,12 @@ function initMap() {
     // Add base layers
     const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',
-        maxZoom: 19
+        maxZoom: 17
     });
 
     const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
         attribution: 'Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
-        maxZoom: 19
+        maxZoom: 17
     });
 
     // Set default layer to satellite
@@ -439,11 +439,14 @@ function ensurePolygonLayer() {
         style: function (feature) {
             const name = getGridName(feature);
             const color = getGridColor(name);
+            const zoom = map ? map.getZoom() : CONFIG.minZoomForGrids;
+            const strokeOpacity = getGridStrokeOpacity(zoom);
+            const fillOpacity = getGridFillOpacity(zoom);
             return {
                 color: color,
                 weight: 2,
-                opacity: 0.8,
-                fillOpacity: 0.1,
+                opacity: strokeOpacity,
+                fillOpacity: fillOpacity,
                 fillColor: color
             };
         },
@@ -723,6 +726,27 @@ function getGridColor(gridName) {
 
     const colors = generateColumnColors();
     return colors[columnNum - 1]; // Convert to 0-based index
+}
+
+function getGridStrokeOpacity(zoom) {
+    const minZoom = CONFIG.minZoomForGrids;
+    const maxZoom = map ? map.getMaxZoom() : CONFIG.mapOptions.maxZoom;
+    if (typeof zoom !== 'number' || !Number.isFinite(zoom)) {
+        return 0.8;
+    }
+
+    if (maxZoom <= minZoom) {
+        return 0.8;
+    }
+
+    const clampedZoom = Math.min(Math.max(zoom, minZoom), maxZoom);
+    const progress = (clampedZoom - minZoom) / (maxZoom - minZoom);
+    return 0.5 + (progress * 0.5);
+}
+
+function getGridFillOpacity(zoom) {
+    const strokeOpacity = getGridStrokeOpacity(zoom);
+    return Math.max(0.05, strokeOpacity * 0.2);
 }
 
 // Clear existing grids and labels
