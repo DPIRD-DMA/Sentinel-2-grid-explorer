@@ -870,7 +870,7 @@ function zoomToGrid(gridName) {
     if (!searchItem || !searchItem.centroid) return;
 
     const { lat, lng } = searchItem.centroid;
-    const targetZoom = Math.max(map.getZoom(), 10);
+    const targetZoom = 8;
     map.setView([lat, lng], targetZoom);
 
     const searchInput = document.getElementById('grid-search');
