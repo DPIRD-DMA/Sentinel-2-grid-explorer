@@ -4,8 +4,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="Explore Sentinel-2 MGRS grid tiles in an interactive map, search by tile ID, review coverage details, and export selections as GeoJSON or CSV.">
+    <link rel="canonical" href="https://dpird-dma.github.io/Sentinel-2-grid-explorer/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Sentinel-2 Grid Explorer">
+    <meta property="og:title" content="Sentinel-2 Grid Explorer">
+    <meta property="og:description"
+        content="Interactive map for browsing Sentinel-2 MGRS grid tiles, searching by tile ID, and exporting GeoJSON or CSV datasets.">
+    <meta property="og:url" content="https://dpird-dma.github.io/Sentinel-2-grid-explorer/">
+    <meta property="og:image" content="https://dpird-dma.github.io/Sentinel-2-grid-explorer/images/Screenshot-1.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Sentinel-2 Grid Explorer">
+    <meta name="twitter:description"
+        content="Browse Sentinel-2 MGRS grid tiles, search for tiles, and export selected footprints for further analysis.">
+    <meta name="twitter:image" content="https://dpird-dma.github.io/Sentinel-2-grid-explorer/images/Screenshot-1.png">
     <title>Sentinel-2 Grid Explorer</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.82em' x='50%' dominant-baseline='middle' text-anchor='middle' font-size='80'%3E🛰️%3C/text%3E%3C/svg%3E">
+    <link rel="icon"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.82em' x='50%' dominant-baseline='middle' text-anchor='middle' font-size='80'%3E🛰️%3C/text%3E%3C/svg%3E">
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -15,6 +31,11 @@
 </head>
 
 <body>
+    <section class="visually-hidden" aria-label="Sentinel-2 Grid Explorer overview">
+        <h1>Sentinel-2 Grid Explorer</h1>
+        <p>Interactive map to browse Sentinel-2 MGRS grid tiles, check coverage, and build exportable selections for
+            downstream analysis.</p>
+    </section>
     <div id="map"></div>
 
     <!-- Loading indicator -->
