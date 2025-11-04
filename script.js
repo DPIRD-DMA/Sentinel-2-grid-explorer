@@ -17,9 +17,15 @@ const CONFIG = {
     }
 };
 
-const polygonRenderer = L.canvas({ padding: 0.5 });
+// Application metadata
+const APP_VERSION = 'v1.1.0'; // Update this version string as needed
 
-function logShareDebug() { }
+function withVersionAttribution(baseText) {
+    return `${baseText} <span class="map-version">${APP_VERSION}</span>`;
+}
+
+const polygonRenderer = L.canvas({ padding: 0.5 });
+const highlightRenderer = L.canvas({ padding: 0.5, pane: 'highlight-pane' });
 
 // Detect whether the current device likely uses a coarse pointer (touch-first)
 function isCoarsePointerDevice() {
@@ -57,6 +63,7 @@ let highlightCoreLayer = null; // Inner core for selection
 let hoverHighlightLayer = null; // Temporary highlight for hover states
 let currentBaseLayer = 'satellite'; // Track current base layer
 let activeHighlightMode = null; // Track current highlight render mode
+let currentHighlightSignature = null; // Track highlighted selection signature
 let shareLinkContainer = null;
 let shareLinkInput = null;
 let shareLinkCopyButton = null;
@@ -69,8 +76,6 @@ let shareDownloadCsvButton = null;
 let shareClearSelectionButton = null;
 let shareZoomSelectionButton = null;
 const selectedGridMap = new Map();
-let activeMoveStartTime = null;
-let activeZoomStartTime = null;
 const rectangleSelectState = {
     active: false,
     startLatLng: null,
@@ -81,6 +86,9 @@ const rectangleSelectState = {
 };
 let suppressNextGridClick = false;
 let suppressNextGridClickTimer = null;
+const activeHoverLayers = new Set();
+let pendingSelectionRetryHandle = null;
+const selectionRenderTimers = [];
 
 // Initialise map
 function initMap() {
@@ -97,12 +105,12 @@ function initMap() {
 
     // Add base layers
     const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors',
+        attribution: withVersionAttribution('© OpenStreetMap contributors'),
         maxZoom: 17
     });
 
     const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+        attribution: withVersionAttribution('Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'),
         maxZoom: 17
     });
 
@@ -132,31 +140,16 @@ function initMap() {
     // Add event listeners
     map.on('zoomend moveend', updateGridDisplay);
 
-    map.on('movestart', () => {
-        activeMoveStartTime = performance.now();
-        logShareDebug('map event: movestart');
-    });
+    map.on('movestart', clearHoverLayers);
+    map.on('zoomstart', clearHoverLayers);
 
-    map.on('moveend', () => {
-        const duration = activeMoveStartTime !== null ? performance.now() - activeMoveStartTime : null;
-        logShareDebug('map event: moveend', {
-            durationMs: duration !== null ? Number(duration.toFixed(2)) : null
-        });
-        activeMoveStartTime = null;
-    });
+    map.on('mousemove', onMapMouseMove);
+    map.on('mouseout', clearHoverLayers);
 
-    map.on('zoomstart', () => {
-        activeZoomStartTime = performance.now();
-        logShareDebug('map event: zoomstart');
-    });
-
-    map.on('zoomend', () => {
-        const duration = activeZoomStartTime !== null ? performance.now() - activeZoomStartTime : null;
-        logShareDebug('map event: zoomend', {
-            durationMs: duration !== null ? Number(duration.toFixed(2)) : null
-        });
-        activeZoomStartTime = null;
-    });
+    const mapContainer = map.getContainer();
+    if (mapContainer) {
+        mapContainer.addEventListener('mouseleave', clearHoverLayers);
+    }
 
     setupRectangleSelection();
 
@@ -192,16 +185,15 @@ function addGitHubControl() {
 // Load GeoJSON data
 async function loadGridData() {
     try {
-        logShareDebug('loadGridData: fetching grid data', { path: CONFIG.geojsonPath });
         const response = await fetch(CONFIG.geojsonPath);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         gridData = await response.json();
-        logShareDebug('loadGridData: data loaded', {
-            featureCount: Array.isArray(gridData?.features) ? gridData.features.length : null
-        });
+        if (Array.isArray(gridData?.features)) {
+            prepareFeatureMetadata(gridData.features);
+        }
         // Initial grid display
         updateGridDisplay();
 
@@ -218,18 +210,15 @@ async function loadGridData() {
         hideLoading();
 
     } catch (error) {
-        logShareDebug('loadGridData: failed to load grid data', { message: error?.message });
         showError('Failed to load Sentinel-2 grid data. Please check the file path.');
     }
 }
 
 // Update grid display based on zoom and bounds
 function updateGridDisplay() {
-    const start = performance.now();
     const zoom = map.getZoom();
 
     if (zoom < CONFIG.minZoomForGrids) {
-        logShareDebug('updateGridDisplay: below min zoom', { zoom });
         clearGrids();
         refreshHighlightForCurrentZoom();
         return;
@@ -238,15 +227,6 @@ function updateGridDisplay() {
     if (!gridData) return;
 
     const bounds = map.getBounds();
-    logShareDebug('updateGridDisplay: begin', {
-        zoom,
-        bounds: {
-            north: bounds.getNorth(),
-            south: bounds.getSouth(),
-            west: bounds.getWest(),
-            east: bounds.getEast()
-        }
-    });
     const visibleGrids = getVisibleGrids(bounds);
     const visibleCount = visibleGrids.length;
 
@@ -267,53 +247,28 @@ function updateGridDisplay() {
     if (noCoverageLayer && map.hasLayer(noCoverageLayer)) {
         noCoverageLayer.bringToFront();
     }
-
-    const duration = performance.now() - start;
-    logShareDebug('updateGridDisplay: complete', {
-        zoom,
-        visibleCount,
-        durationMs: Number(duration.toFixed(2))
-    });
 }
 
 // Get grids within current map bounds (with world wrapping)
 function getVisibleGrids(bounds) {
     const visibleGrids = [];
-    const start = performance.now();
 
     // Get the wrapped bounds to handle world repetition
     const wrappedBounds = getWrappedBounds(bounds);
 
     gridData.features.forEach(feature => {
-        if (!feature.geometry || !feature.geometry.coordinates) return;
+        if (!feature || !feature.geometry) {
+            return;
+        }
 
-        const geometry = feature.geometry;
-        let isVisible = false;
-
-        // Check visibility against each wrapped bounds
-        wrappedBounds.forEach(wrappedBound => {
-            if (isVisible) return; // Already found visible
-
-            if (geometry.type === 'Polygon') {
-                isVisible = isPolygonIntersectingBounds(geometry.coordinates[0], wrappedBound);
-            } else if (geometry.type === 'MultiPolygon') {
-                isVisible = geometry.coordinates.some(polygon =>
-                    isPolygonIntersectingBounds(polygon[0], wrappedBound)
-                );
+        for (let i = 0; i < wrappedBounds.length; i++) {
+            if (doesFeatureIntersectBounds(feature, wrappedBounds[i])) {
+                visibleGrids.push(feature);
+                break;
             }
-        });
-
-        if (isVisible) {
-            visibleGrids.push(feature);
         }
     });
 
-    const duration = performance.now() - start;
-    logShareDebug('getVisibleGrids: finished', {
-        visibleCount: visibleGrids.length,
-        wrappedBoundsCount: wrappedBounds.length,
-        durationMs: Number(duration.toFixed(2))
-    });
     return visibleGrids;
 }
 
@@ -355,63 +310,21 @@ function getWrappedBounds(bounds) {
 }
 
 // Check if polygon intersects with map bounds
-function isPolygonIntersectingBounds(coords, bounds) {
-    if (!coords || coords.length === 0) return false;
-
-    // Get polygon bounding box
-    let minLat = Infinity, maxLat = -Infinity;
-    let minLng = Infinity, maxLng = -Infinity;
-
-    coords.forEach(coord => {
-        const lng = coord[0];
-        const lat = coord[1];
-        minLat = Math.min(minLat, lat);
-        maxLat = Math.max(maxLat, lat);
-        minLng = Math.min(minLng, lng);
-        maxLng = Math.max(maxLng, lng);
-    });
-
-    // Check if polygon bounding box intersects with map bounds
-    const mapSouth = bounds.getSouth();
-    const mapNorth = bounds.getNorth();
-    const mapWest = bounds.getWest();
-    const mapEast = bounds.getEast();
-
-    // Handle longitude wrapping around 180/-180
-    const lngIntersects = (maxLng >= mapWest && minLng <= mapEast) ||
-        (mapWest > mapEast && (maxLng >= mapWest || minLng <= mapEast));
-
-    const latIntersects = maxLat >= mapSouth && minLat <= mapNorth;
-
-    return lngIntersects && latIntersects;
-}
-
 // Render grids as polygons (high zoom)
 function renderGridsAsPolygons(grids) {
-    const start = performance.now();
-
     if (!Array.isArray(grids) || grids.length === 0) {
         clearPolygonLayer();
         destroyLabelLayer();
-        return logShareDebug('renderGridsAsPolygons: no grids to render');
+        return;
     }
 
     ensurePolygonLayer();
 
-    const clearStart = performance.now();
     polygonLayer.clearLayers();
-    logShareDebug('renderGridsAsPolygons: cleared layer', {
-        durationMs: Number((performance.now() - clearStart).toFixed(2))
-    });
 
     labelPositions = [];
 
-    const addStart = performance.now();
     polygonLayer.addData(grids);
-    logShareDebug('renderGridsAsPolygons: data added', {
-        count: grids.length,
-        durationMs: Number((performance.now() - addStart).toFixed(2))
-    });
 
     if (map.getZoom() >= CONFIG.labelZoomThreshold) {
         addPolygonLabels(grids);
@@ -419,10 +332,8 @@ function renderGridsAsPolygons(grids) {
         destroyLabelLayer();
     }
 
-    logShareDebug('renderGridsAsPolygons: complete', {
-        count: grids.length,
-        durationMs: Number((performance.now() - start).toFixed(2))
-    });
+
+    scheduleSelectionRenderRefresh();
 }
 
 function clearPolygonLayer() {
@@ -430,20 +341,14 @@ function clearPolygonLayer() {
         return;
     }
 
+    clearHoverLayers();
+
     if (typeof polygonLayer.clearLayers === 'function') {
-        const clearStart = performance.now();
         polygonLayer.clearLayers();
-        logShareDebug('clearPolygonLayer: cleared existing layers', {
-            durationMs: Number((performance.now() - clearStart).toFixed(2))
-        });
     }
 
     if (map.hasLayer(polygonLayer)) {
-        const removeStart = performance.now();
         map.removeLayer(polygonLayer);
-        logShareDebug('clearPolygonLayer: removed layer', {
-            durationMs: Number((performance.now() - removeStart).toFixed(2))
-        });
     }
 
     polygonLayer = null;
@@ -453,7 +358,6 @@ function ensurePolygonLayer() {
     if (polygonLayer && typeof polygonLayer.clearLayers === 'function' && typeof polygonLayer.addData === 'function') {
         if (!map.hasLayer(polygonLayer)) {
             polygonLayer.addTo(map);
-            logShareDebug('ensurePolygonLayer: re-added existing layer');
         }
         return;
     }
@@ -486,7 +390,6 @@ function ensurePolygonLayer() {
         }
     }).addTo(map);
 
-    logShareDebug('ensurePolygonLayer: created layer');
 
 }
 
@@ -494,14 +397,12 @@ function ensureLabelLayer() {
     if (labelLayer && typeof labelLayer.clearLayers === 'function') {
         if (!map.hasLayer(labelLayer)) {
             labelLayer.addTo(map);
-            logShareDebug('ensureLabelLayer: re-added label layer');
         }
         return;
     }
 
     destroyLabelLayer();
     labelLayer = L.layerGroup().addTo(map);
-    logShareDebug('ensureLabelLayer: created label layer');
 }
 
 function clearLabelLayer() {
@@ -509,12 +410,8 @@ function clearLabelLayer() {
         return;
     }
 
-    const clearStart = performance.now();
     labelLayer.clearLayers();
     labelPositions = [];
-    logShareDebug('clearLabelLayer: cleared label features', {
-        durationMs: Number((performance.now() - clearStart).toFixed(2))
-    });
 }
 
 function destroyLabelLayer() {
@@ -526,11 +423,7 @@ function destroyLabelLayer() {
     clearLabelLayer();
 
     if (map.hasLayer(labelLayer)) {
-        const removeStart = performance.now();
         map.removeLayer(labelLayer);
-        logShareDebug('destroyLabelLayer: removed label layer', {
-            durationMs: Number((performance.now() - removeStart).toFixed(2))
-        });
     }
 
     labelLayer = null;
@@ -540,28 +433,17 @@ function destroyLabelLayer() {
 // Replace the existing addPolygonLabels function with this updated version:
 
 function addPolygonLabels(grids) {
-    const start = performance.now();
     ensureLabelLayer();
     clearLabelLayer();
 
     const labels = [];
-    const labelDebugStats = {
-        requested: grids.length,
-        placed: 0,
-        skipped: 0,
-        offsetAttempts: 0,
-        collisionChecks: 0,
-        totalPlacementTimeMs: 0,
-        maxPlacementTimeMs: 0,
-        findCalls: 0
-    };
 
     grids.forEach(feature => {
-        const centroid = getPolygonCentroid(feature.geometry);
+        const centroid = getFeatureCentroid(feature);
         if (!centroid) return;
 
         const name = getGridName(feature);
-        const labelPosition = findNonOverlappingPosition(centroid, name, labelDebugStats);
+        const labelPosition = findNonOverlappingPosition(centroid, name);
 
         if (labelPosition) {
             const label = L.marker([labelPosition.lat, labelPosition.lng], {
@@ -583,38 +465,19 @@ function addPolygonLabels(grids) {
                 width: name.length * 8, // Estimate label width
                 height: 16
             });
-            labelDebugStats.placed += 1;
         } else {
-            labelDebugStats.skipped += 1;
+            // No label could be placed without overlap; skip rendering a label.
         }
     });
 
     if (labels.length > 0) {
         labels.forEach(label => labelLayer.addLayer(label));
     }
-
-    const duration = performance.now() - start;
-    const averagePlacementMs = labelDebugStats.findCalls > 0
-        ? labelDebugStats.totalPlacementTimeMs / labelDebugStats.findCalls
-        : 0;
-
-    logShareDebug('addPolygonLabels: complete', {
-        requested: labelDebugStats.requested,
-        placed: labelDebugStats.placed,
-        skipped: labelDebugStats.skipped,
-        offsetAttempts: labelDebugStats.offsetAttempts,
-        collisionChecks: labelDebugStats.collisionChecks,
-        averagePlacementMs: Number(averagePlacementMs.toFixed(2)),
-        maxPlacementMs: Number(labelDebugStats.maxPlacementTimeMs.toFixed(2)),
-        durationMs: Number(duration.toFixed(2))
-    });
 }
 
 // Find position for label that doesn't overlap with existing labels
-function findNonOverlappingPosition(centroid, text, debugStats) {
-    const start = performance.now();
+function findNonOverlappingPosition(centroid, text) {
     const textWidth = text.length * 8; // Rough estimate
-    const textHeight = 16;
     const minDistance = 20; // Minimum pixels between labels
 
     // Convert lat/lng to pixel coordinates for collision detection
@@ -634,9 +497,6 @@ function findNonOverlappingPosition(centroid, text, debugStats) {
     ];
 
     for (const offset of offsets) {
-        if (debugStats) {
-            debugStats.offsetAttempts += 1;
-        }
         const testPixel = {
             x: centerPixel.x + offset.x,
             y: centerPixel.y + offset.y
@@ -653,29 +513,12 @@ function findNonOverlappingPosition(centroid, text, debugStats) {
                 Math.pow(testPixel.y - existingPixel.y, 2)
             );
 
-            if (debugStats) {
-                debugStats.collisionChecks += 1;
-            }
-
             return distance < minDistance + (textWidth + existing.width) / 4;
         });
 
         if (!collides) {
-            if (debugStats) {
-                const elapsed = performance.now() - start;
-                debugStats.totalPlacementTimeMs += elapsed;
-                debugStats.maxPlacementTimeMs = Math.max(debugStats.maxPlacementTimeMs, elapsed);
-                debugStats.findCalls += 1;
-            }
             return testLatLng;
         }
-    }
-
-    if (debugStats) {
-        const elapsed = performance.now() - start;
-        debugStats.totalPlacementTimeMs += elapsed;
-        debugStats.maxPlacementTimeMs = Math.max(debugStats.maxPlacementTimeMs, elapsed);
-        debugStats.findCalls += 1;
     }
 
     // If no non-overlapping position found, don't show label
@@ -710,6 +553,104 @@ function getPolygonCentroid(geometry) {
         lat: sumLat / validCoords.length,
         lng: sumLng / validCoords.length
     };
+}
+
+function computeGeometryBounds(geometry) {
+    if (!geometry) {
+        return null;
+    }
+
+    const bounds = {
+        minLat: Infinity,
+        maxLat: -Infinity,
+        minLng: Infinity,
+        maxLng: -Infinity
+    };
+
+    let found = false;
+
+    const updateBounds = coords => {
+        if (!Array.isArray(coords)) {
+            return;
+        }
+
+        if (typeof coords[0] === 'number' && typeof coords[1] === 'number') {
+            const lng = coords[0];
+            const lat = coords[1];
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                return;
+            }
+            bounds.minLat = Math.min(bounds.minLat, lat);
+            bounds.maxLat = Math.max(bounds.maxLat, lat);
+            bounds.minLng = Math.min(bounds.minLng, lng);
+            bounds.maxLng = Math.max(bounds.maxLng, lng);
+            found = true;
+            return;
+        }
+
+        coords.forEach(updateBounds);
+    };
+
+    const traverseGeometry = geom => {
+        if (!geom) return;
+        if (geom.type === 'GeometryCollection' && Array.isArray(geom.geometries)) {
+            geom.geometries.forEach(traverseGeometry);
+            return;
+        }
+        if (geom.coordinates) {
+            updateBounds(geom.coordinates);
+        }
+    };
+
+    traverseGeometry(geometry);
+
+    if (!found) {
+        return null;
+    }
+
+    return bounds;
+}
+
+function getFeatureBounds(feature) {
+    if (!feature || !feature.geometry) {
+        return null;
+    }
+
+    if (!feature.__bbox) {
+        feature.__bbox = computeGeometryBounds(feature.geometry);
+    }
+
+    return feature.__bbox || null;
+}
+
+function getFeatureCentroid(feature) {
+    if (!feature) {
+        return null;
+    }
+
+    if (!feature.__centroid && feature.geometry) {
+        feature.__centroid = getPolygonCentroid(feature.geometry);
+    }
+
+    return feature.__centroid || null;
+}
+
+function prepareFeatureMetadata(features) {
+    if (!Array.isArray(features)) {
+        return;
+    }
+
+    features.forEach(feature => {
+        if (!feature || typeof feature !== 'object') {
+            return;
+        }
+        if (!feature.__bbox) {
+            feature.__bbox = computeGeometryBounds(feature.geometry);
+        }
+        if (!feature.__centroid && feature.geometry) {
+            feature.__centroid = getPolygonCentroid(feature.geometry);
+        }
+    });
 }
 
 // Get grid name from feature properties
@@ -776,25 +717,188 @@ function getGridFillOpacity(zoom) {
     return Math.max(0.05, strokeOpacity * 0.2);
 }
 
+function adjustHslLightness(hslColor, delta) {
+    if (typeof hslColor !== 'string') {
+        return hslColor;
+    }
+
+    const pattern = /^hsl\(\s*([0-9.+-]+)\s*,\s*([0-9.+-]+)%\s*,\s*([0-9.+-]+)%\s*\)$/i;
+    const match = pattern.exec(hslColor.trim());
+
+    if (!match) {
+        return hslColor;
+    }
+
+    const hue = parseFloat(match[1]);
+    const saturation = parseFloat(match[2]);
+    const lightness = parseFloat(match[3]);
+
+    if (!Number.isFinite(hue) || !Number.isFinite(saturation) || !Number.isFinite(lightness)) {
+        return hslColor;
+    }
+
+    const newLightness = Math.max(0, Math.min(100, lightness + delta));
+    return `hsl(${hue}, ${saturation}%, ${newLightness}%)`;
+}
+
+function applyGridHoverStyle(layer, feature) {
+    if (!layer || !feature) {
+        return;
+    }
+
+    const name = getGridName(feature);
+    const baseColor = getGridColor(name);
+    const hoverFillColor = adjustHslLightness(baseColor, 18);
+    const zoom = map ? map.getZoom() : CONFIG.minZoomForGrids;
+    const baseFillOpacity = getGridFillOpacity(zoom);
+
+    layer.setStyle({
+        color: '#ffffff',
+        weight: 3,
+        opacity: 1,
+        fillColor: hoverFillColor,
+        fillOpacity: Math.min(baseFillOpacity + 0.25, 0.75)
+    });
+
+    if (typeof layer.bringToFront === 'function') {
+        layer.bringToFront();
+    }
+}
+
+function onMapMouseMove(event) {
+    if (!event || !event.latlng) {
+        return;
+    }
+
+    if (rectangleSelectState.active) {
+        return;
+    }
+
+    updateHoverLayersFromLatLng(event.latlng);
+}
+
+function updateHoverLayersFromLatLng(latlng) {
+    if (!latlng) {
+        clearHoverLayers();
+        return;
+    }
+
+    const layers = getLayersAtLatLng(latlng);
+    setActiveHoverLayers(layers);
+}
+
+function updateHoverLayersFromBounds(bounds) {
+    if (!bounds || typeof bounds.isValid !== 'function' || !bounds.isValid()) {
+        clearHoverLayers();
+        return;
+    }
+
+    const layers = getLayersInBounds(bounds);
+    setActiveHoverLayers(layers);
+}
+
+function getLayersAtLatLng(latlng) {
+    if (!latlng || !polygonLayer || typeof polygonLayer.eachLayer !== 'function') {
+        return [];
+    }
+
+    const layers = [];
+    polygonLayer.eachLayer(layer => {
+        const feature = layer?.feature;
+        if (!feature) {
+            return;
+        }
+
+        if (isLatLngInFeature(latlng, feature)) {
+            layers.push(layer);
+        }
+    });
+
+    return layers;
+}
+
+function getLayersInBounds(bounds) {
+    if (!bounds || typeof bounds.isValid !== 'function' || !bounds.isValid()) {
+        return [];
+    }
+
+    if (!polygonLayer || typeof polygonLayer.eachLayer !== 'function') {
+        return [];
+    }
+
+    const layers = [];
+    polygonLayer.eachLayer(layer => {
+        const feature = layer?.feature;
+        if (!feature) {
+            return;
+        }
+
+        if (doesFeatureIntersectBounds(feature, bounds)) {
+            layers.push(layer);
+        }
+    });
+
+    return layers;
+}
+
+function setActiveHoverLayers(layers) {
+    if (!polygonLayer || typeof polygonLayer.resetStyle !== 'function') {
+        return;
+    }
+
+    const nextLayers = new Set(layers);
+
+    activeHoverLayers.forEach(layer => {
+        if (!nextLayers.has(layer)) {
+            polygonLayer.resetStyle(layer);
+        }
+    });
+
+    const updatedLayers = new Set();
+    nextLayers.forEach(layer => {
+        if (!activeHoverLayers.has(layer)) {
+            const feature = layer?.feature;
+            if (feature) {
+                applyGridHoverStyle(layer, feature);
+            }
+        }
+        updatedLayers.add(layer);
+    });
+
+    activeHoverLayers.clear();
+    updatedLayers.forEach(layer => activeHoverLayers.add(layer));
+}
+
+function clearHoverLayers() {
+    if (!polygonLayer || typeof polygonLayer.resetStyle !== 'function') {
+        activeHoverLayers.clear();
+        return;
+    }
+
+    if (activeHoverLayers.size === 0) {
+        return;
+    }
+
+    activeHoverLayers.forEach(layer => {
+        polygonLayer.resetStyle(layer);
+    });
+    activeHoverLayers.clear();
+}
+
 // Clear existing grids and labels
 function clearGrids(options = {}) {
     const { skipLabelLayer = false } = options;
-    const start = performance.now();
     clearPolygonLayer();
     if (!skipLabelLayer) {
         destroyLabelLayer();
     }
-    const duration = performance.now() - start;
-    logShareDebug('clearGrids: complete', {
-        durationMs: Number(duration.toFixed(2))
-    });
 }
 
 // Build search index for quick grid lookup
 function buildSearchIndex() {
     searchIndex = gridData.features.map(feature => {
         const name = getGridName(feature);
-        const centroid = getPolygonCentroid(feature.geometry);
+        const centroid = getFeatureCentroid(feature);
         return {
             name: name.toUpperCase(),
             originalName: name,
@@ -803,9 +907,6 @@ function buildSearchIndex() {
         };
     }).filter(item => item.centroid !== null);
 
-    logShareDebug('buildSearchIndex: completed', {
-        entryCount: Array.isArray(searchIndex) ? searchIndex.length : 0
-    });
 }
 
 // Setup search functionality
@@ -917,7 +1018,6 @@ function highlightGrids(features, options = {}) {
         return;
     }
 
-    const start = performance.now();
     const { flash = false } = options;
 
     const haloStyle = {
@@ -925,15 +1025,19 @@ function highlightGrids(features, options = {}) {
         weight: 8,
         opacity: 0.7,
         fillOpacity: 0,
-        fillColor: 'transparent'
+        fillColor: 'transparent',
+        lineCap: 'round',
+        lineJoin: 'round'
     };
 
     const coreStyle = {
         color: '#ffff00',
         weight: 4,
         opacity: 1,
-        fillOpacity: 0,
-        fillColor: 'transparent'
+        fillOpacity: 0.15,
+        fillColor: '#ffff00',
+        lineCap: 'round',
+        lineJoin: 'round'
     };
 
     const geoJsonData = featureList.length === 1
@@ -947,14 +1051,16 @@ function highlightGrids(features, options = {}) {
         style: haloStyle,
         interactive: false,
         pane: 'highlight-pane',
-        className: 'selection-halo'
+        className: 'selection-halo',
+        renderer: highlightRenderer
     });
 
     highlightCoreLayer = L.geoJSON(geoJsonData, {
         style: coreStyle,
         interactive: false,
         pane: 'highlight-pane',
-        className: 'selection-core'
+        className: 'selection-core',
+        renderer: highlightRenderer
     });
 
     highlightLayer = L.layerGroup([highlightHaloLayer, highlightCoreLayer]).addTo(map);
@@ -971,14 +1077,6 @@ function highlightGrids(features, options = {}) {
     if (flash) {
         startHighlightFlash(coreStyle);
     }
-
-    const duration = performance.now() - start;
-    logShareDebug('highlightGrids: complete', {
-        featureCount: featureList.length,
-        mode: activeHighlightMode,
-        durationMs: Number(duration.toFixed(2)),
-        flash
-    });
 }
 
 function startHighlightFlash(baseStyle) {
@@ -1038,6 +1136,7 @@ function clearHighlight() {
     highlightHaloLayer = null;
     highlightCoreLayer = null;
     activeHighlightMode = null;
+    currentHighlightSignature = null;
 
     clearHoverHighlight();
 }
@@ -1136,7 +1235,7 @@ function processGridClick(feature, event, overrideOptions = {}) {
             if (selectedGridMap.has(entry.upper)) {
                 return;
             }
-            const centroid = getPolygonCentroid(entry.feature.geometry);
+            const centroid = getFeatureCentroid(entry.feature);
             selectedGridMap.set(entry.upper, {
                 feature: entry.feature,
                 name: entry.name,
@@ -1278,23 +1377,23 @@ function computeBoundsForFeatures(features) {
     let hasValidCoordinate = false;
 
     features.forEach(feature => {
-        const geometry = feature?.geometry;
-        const extended = extendBoundsWithGeometry(bounds, geometry);
+        const featureBounds = getFeatureBounds(feature);
+        if (featureBounds) {
+            bounds.extend([featureBounds.minLat, featureBounds.minLng]);
+            bounds.extend([featureBounds.maxLat, featureBounds.maxLng]);
+            hasValidCoordinate = true;
+            return;
+        }
 
-        if (!extended) {
-            const centroid = getPolygonCentroid(geometry);
-            if (centroid) {
-                bounds.extend([centroid.lat, centroid.lng]);
-                hasValidCoordinate = true;
-            }
-        } else {
+        const centroid = getFeatureCentroid(feature);
+        if (centroid) {
+            bounds.extend([centroid.lat, centroid.lng]);
             hasValidCoordinate = true;
         }
     });
 
     return hasValidCoordinate ? bounds : null;
 }
-
 function zoomToSelection() {
     if (!map) return;
 
@@ -1308,60 +1407,6 @@ function zoomToSelection() {
         map.fitBounds(bounds, { padding: [80, 80] });
     }
 }
-
-function extendBoundsWithGeometry(bounds, geometry) {
-    if (!geometry || !bounds) return false;
-
-    let extended = false;
-
-    const extendCoords = coords => {
-        if (!Array.isArray(coords)) return;
-        coords.forEach(coord => {
-            if (!Array.isArray(coord) || coord.length < 2) return;
-            const lng = coord[0];
-            const lat = coord[1];
-            if (typeof lat === 'number' && typeof lng === 'number') {
-                bounds.extend([lat, lng]);
-                extended = true;
-            }
-        });
-    };
-
-    switch (geometry.type) {
-        case 'Polygon':
-            geometry.coordinates?.forEach(ring => extendCoords(ring));
-            break;
-        case 'MultiPolygon':
-            geometry.coordinates?.forEach(polygon => {
-                polygon?.forEach(ring => extendCoords(ring));
-            });
-            break;
-        case 'LineString':
-            extendCoords(geometry.coordinates);
-            break;
-        case 'MultiLineString':
-            geometry.coordinates?.forEach(line => extendCoords(line));
-            break;
-        case 'Point':
-            extendCoords([geometry.coordinates]);
-            break;
-        case 'MultiPoint':
-            extendCoords(geometry.coordinates);
-            break;
-        case 'GeometryCollection':
-            geometry.geometries?.forEach(child => {
-                if (extendBoundsWithGeometry(bounds, child)) {
-                    extended = true;
-                }
-            });
-            break;
-        default:
-            break;
-    }
-
-    return extended;
-}
-
 function setupRectangleSelection() {
     if (!map) return;
 
@@ -1384,6 +1429,7 @@ function onRectangleMouseDown(event) {
     }
 
     event.originalEvent.preventDefault();
+    clearHoverLayers();
 
     rectangleSelectState.active = true;
     rectangleSelectState.startLatLng = event.latlng;
@@ -1409,6 +1455,8 @@ function onRectangleMouseDown(event) {
             interactive: false
         }
     ).addTo(map);
+
+    updateHoverLayersFromBounds(rectangleSelectState.rectangle.getBounds());
 }
 
 function onRectangleMouseMove(event) {
@@ -1420,6 +1468,7 @@ function onRectangleMouseMove(event) {
     rectangleSelectState.lastLatLng = event.latlng;
     const bounds = L.latLngBounds(rectangleSelectState.startLatLng, event.latlng);
     rectangleSelectState.rectangle.setBounds(bounds);
+    updateHoverLayersFromBounds(bounds);
 }
 
 function onRectangleMouseUp(event) {
@@ -1462,6 +1511,8 @@ function resetRectangleSelection() {
         map.removeLayer(rectangleSelectState.rectangle);
     }
 
+    clearHoverLayers();
+
     rectangleSelectState.active = false;
     rectangleSelectState.startLatLng = null;
     rectangleSelectState.lastLatLng = null;
@@ -1480,19 +1531,20 @@ function completeRectangleSelection(finalLatLng) {
     const hasMoved = rectangleSelectState.hasMoved;
     const startLatLng = rectangleSelectState.startLatLng;
 
+    if (!hasMoved || !startLatLng || !finalLatLng) {
+        resetRectangleSelection();
+        return;
+    }
+
+    const bounds = L.latLngBounds(startLatLng, finalLatLng);
+
+    const selectedFeatures = collectRenderedFeaturesInBounds(bounds);
     resetRectangleSelection();
 
     if (hasMoved) {
         scheduleSuppressNextGridClick();
     }
 
-    if (!hasMoved || !startLatLng || !finalLatLng) {
-        return;
-    }
-
-    const bounds = L.latLngBounds(startLatLng, finalLatLng);
-
-    const selectedFeatures = findFeaturesInBounds(bounds);
     if (selectedFeatures.length === 0) {
         return;
     }
@@ -1530,6 +1582,29 @@ function scheduleSuppressNextGridClick() {
     }, 250);
 }
 
+function collectRenderedFeaturesInBounds(bounds) {
+    const renderedMatches = [];
+
+    if (polygonLayer && typeof polygonLayer.eachLayer === 'function') {
+        polygonLayer.eachLayer(layer => {
+            const feature = layer?.feature;
+            if (!feature) {
+                return;
+            }
+
+            if (doesFeatureIntersectBounds(feature, bounds)) {
+                renderedMatches.push(feature);
+            }
+        });
+    }
+
+    if (renderedMatches.length > 0) {
+        return dedupeFeaturesByName(renderedMatches);
+    }
+
+    return findFeaturesInBounds(bounds);
+}
+
 function findFeaturesInBounds(bounds) {
     if (!gridData || !bounds) {
         return [];
@@ -1553,17 +1628,30 @@ function doesFeatureIntersectBounds(feature, bounds) {
 
     const geometry = feature.geometry;
 
-    if (geometry.type === 'Polygon' && geometry.coordinates?.[0]) {
-        if (isPolygonIntersectingBounds(geometry.coordinates[0], bounds)) {
-            return true;
-        }
-    } else if (geometry.type === 'MultiPolygon') {
-        if (geometry.coordinates.some(polygon => polygon?.[0] && isPolygonIntersectingBounds(polygon[0], bounds))) {
-            return true;
-        }
+    const featureBounds = getFeatureBounds(feature);
+    if (!featureBounds) {
+        return false;
     }
 
-    const centroid = getPolygonCentroid(geometry);
+    const mapSouth = bounds.getSouth();
+    const mapNorth = bounds.getNorth();
+    const mapWest = bounds.getWest();
+    const mapEast = bounds.getEast();
+
+    const lngIntersects = (featureBounds.maxLng >= mapWest && featureBounds.minLng <= mapEast) ||
+        (mapWest > mapEast && (featureBounds.maxLng >= mapWest || featureBounds.minLng <= mapEast));
+
+    const latIntersects = featureBounds.maxLat >= mapSouth && featureBounds.minLat <= mapNorth;
+
+    if (!lngIntersects || !latIntersects) {
+        return false;
+    }
+
+    if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
+        return true;
+    }
+
+    const centroid = getFeatureCentroid(feature);
     if (centroid) {
         return bounds.contains([centroid.lat, centroid.lng]);
     }
@@ -1586,14 +1674,6 @@ function updateSelection(features, options = {}) {
     } = options;
 
     if (debugSource) {
-        logShareDebug('updateSelection: invoked', {
-            debugSource,
-            featureCount: features.length,
-            replace,
-            centerMap,
-            flash,
-            focusShareLink
-        });
     }
 
     if (replace) {
@@ -1614,7 +1694,7 @@ function updateSelection(features, options = {}) {
             return;
         }
 
-        const centroid = getPolygonCentroid(feature.geometry);
+        const centroid = getFeatureCentroid(feature);
         selectedGridMap.set(upper, {
             feature,
             name,
@@ -1630,11 +1710,6 @@ function updateSelection(features, options = {}) {
     });
 
     if (debugSource) {
-        logShareDebug('updateSelection: selection refreshed', {
-            debugSource,
-            addedCount,
-            totalSelected: selectedGridMap.size
-        });
     }
 }
 
@@ -1693,6 +1768,7 @@ function refreshSelectionState(options = {}) {
         suppressShareLink = false
     } = options;
 
+
     const selectionEntries = getSelectedEntries();
 
     if (selectionEntries.length === 0) {
@@ -1713,7 +1789,19 @@ function refreshSelectionState(options = {}) {
         }
     }
 
-    highlightGrids(selectionEntries.map(entry => entry.feature), { flash });
+    const nextSignature = selectionEntries
+        .map(entry => entry.name.toUpperCase())
+        .sort()
+        .join('|');
+
+    const highlightChanged = flash || nextSignature !== currentHighlightSignature;
+
+    if (highlightChanged) {
+        highlightGrids(selectionEntries.map(entry => entry.feature), { flash });
+        currentHighlightSignature = nextSignature;
+    } else {
+        refreshHighlightForCurrentZoom();
+    }
 
     const shareUrl = updateAddressBarWithSelection(getSelectedNamesSorted());
 
@@ -1816,7 +1904,7 @@ function downloadSelectionAsCSV() {
 
     const rows = selectionEntries.map(entry => {
         const name = entry.name || getGridName(entry.feature) || '';
-        const centroid = entry.centroid || getPolygonCentroid(entry.feature?.geometry) || { lat: '', lng: '' };
+        const centroid = entry.centroid || getFeatureCentroid(entry.feature) || { lat: '', lng: '' };
         const properties = entry.feature?.properties || {};
 
         const baseValues = [name, formatCsvNumber(centroid.lat), formatCsvNumber(centroid.lng)];
@@ -2077,7 +2165,6 @@ function hideSearchResults() {
 function getGridParamsFromUrl() {
     try {
         const search = window.location.search || '';
-        logShareDebug('getGridParamsFromUrl: parsing search params', { search });
         const params = new URLSearchParams(window.location.search);
         const gridsParam = params.get('grids');
         const gridParam = params.get('grid');
@@ -2100,58 +2187,130 @@ function getGridParamsFromUrl() {
             }
         }
 
-        logShareDebug('getGridParamsFromUrl: extracted raw names', { names: [...names] });
         const uniqueNames = [...new Set(names)];
-        logShareDebug('getGridParamsFromUrl: unique names', { uniqueNames });
         return uniqueNames.length > 0 ? uniqueNames : null;
     } catch (error) {
-        logShareDebug('getGridParamsFromUrl: failed to parse params', { message: error?.message });
         return null;
     }
 }
 
+function schedulePendingSelectionRetry(reason, delayMs = 200) {
+    if (!Array.isArray(pendingGridSelection) || pendingGridSelection.length === 0) {
+        pendingSelectionRetryHandle = null;
+        return;
+    }
+
+    if (pendingSelectionRetryHandle !== null) {
+        return;
+    }
+
+    const delay = Math.max(50, delayMs);
+
+    pendingSelectionRetryHandle = setTimeout(() => {
+        pendingSelectionRetryHandle = null;
+        applyPendingGridSelection();
+    }, delay);
+}
+
+function clearSelectionRenderTimers() {
+    if (selectionRenderTimers.length === 0) {
+        return;
+    }
+    while (selectionRenderTimers.length > 0) {
+        const timerId = selectionRenderTimers.pop();
+        clearTimeout(timerId);
+    }
+}
+
+function scheduleSelectionRenderRefresh() {
+    if (!map || selectedGridMap.size === 0) {
+        return;
+    }
+
+    const refresh = () => {
+        if (!map || selectedGridMap.size === 0) {
+            return;
+        }
+        refreshHighlightForCurrentZoom();
+        refreshSelectionState({
+            flash: false,
+            focusShareLink: false,
+            centerMap: false,
+            suppressShareLink: true
+        });
+        if (typeof map.invalidateSize === 'function') {
+            map.invalidateSize();
+        }
+    };
+
+    clearSelectionRenderTimers();
+
+
+    const invoke = () => {
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(refresh);
+        } else {
+            refresh();
+        }
+    };
+
+    invoke();
+
+    [120, 320, 600].forEach(delay => {
+        const timerId = setTimeout(invoke, delay);
+        selectionRenderTimers.push(timerId);
+    });
+}
+
 function applyPendingGridSelection() {
     if (!Array.isArray(pendingGridSelection) || pendingGridSelection.length === 0) {
-        logShareDebug('applyPendingGridSelection: no pending selection to apply');
+        return;
+    }
+
+    if (!map) {
+        schedulePendingSelectionRetry('map-not-initialised');
+        return;
+    }
+
+    if (!map._loaded) {
+        schedulePendingSelectionRetry('map-not-ready');
+        map.once('load', applyPendingGridSelection);
         return;
     }
 
     if (!Array.isArray(searchIndex) || searchIndex.length === 0) {
-        logShareDebug('applyPendingGridSelection: search index not ready yet', {
-            pendingCount: pendingGridSelection.length
-        });
+        schedulePendingSelectionRetry('search-index-pending');
         return;
     }
 
-    logShareDebug('applyPendingGridSelection: attempting to match pending grids', {
-        pending: [...pendingGridSelection],
-        searchIndexSize: searchIndex.length
-    });
+    if (!polygonLayer) {
+        updateGridDisplay();
+        schedulePendingSelectionRetry('polygon-layer-pending');
+        return;
+    }
+
+
     const matches = pendingGridSelection.map(name => {
         const match = searchIndex.find(item => item.name === name);
         if (!match) {
-            logShareDebug('applyPendingGridSelection: grid not found in search index', { name });
         }
         return match;
     }).filter(Boolean);
 
     if (matches.length === 0) {
-        logShareDebug('applyPendingGridSelection: no matches found, clearing pending selection');
         pendingGridSelection = null;
         return;
     }
 
-    const features = matches.map(item => item.feature);
-    logShareDebug('applyPendingGridSelection: matched features', {
-        matchCount: matches.length,
-        featureNames: matches.map(item => item.name)
-    });
+    if (pendingSelectionRetryHandle !== null) {
+        clearTimeout(pendingSelectionRetryHandle);
+        pendingSelectionRetryHandle = null;
+    }
 
-    setTimeout(() => {
-        logShareDebug('applyPendingGridSelection: invoking updateSelection', {
-            featureCount: features.length,
-            replace: true
-        });
+    const features = matches.map(item => item.feature);
+
+    const applySelection = () => {
+
         updateSelection(features, {
             replace: true,
             centerMap: false,
@@ -2160,20 +2319,52 @@ function applyPendingGridSelection() {
             debugSource: 'share-link'
         });
 
-        if (map) {
-            const bounds = computeBoundsForFeatures(features);
-            if (bounds && bounds.isValid()) {
-                map.fitBounds(bounds, { padding: [80, 80] });
-                logShareDebug('applyPendingGridSelection: map.fitBounds executed', {
-                    padding: [80, 80]
-                });
-            } else {
-                logShareDebug('applyPendingGridSelection: bounds invalid or unavailable');
-            }
-        }
-    }, 200);
 
-    logShareDebug('applyPendingGridSelection: scheduled selection application');
+        const bounds = computeBoundsForFeatures(features);
+
+        if (map && bounds && typeof bounds.isValid === 'function' && bounds.isValid()) {
+            let moveHandled = false;
+            const handleMoveEnd = () => {
+                if (moveHandled) {
+                    return;
+                }
+                moveHandled = true;
+                map.off('moveend', handleMoveEnd);
+
+                if (typeof debouncedUpdate === 'function') {
+                    debouncedUpdate();
+                } else {
+                    updateGridDisplay();
+                }
+
+                scheduleSelectionRenderRefresh();
+            };
+
+            const currentBounds = typeof map.getBounds === 'function'
+                ? map.getBounds()
+                : null;
+
+            const shouldFit = !currentBounds || !currentBounds.equals(bounds, 0.000001);
+
+            if (shouldFit) {
+                map.once('moveend', handleMoveEnd);
+                map.fitBounds(bounds, { padding: [80, 80] });
+            } else {
+                handleMoveEnd();
+            }
+        } else {
+            scheduleSelectionRenderRefresh();
+        }
+    };
+
+    map.whenReady(() => {
+        if (!map) {
+            return;
+        }
+
+        applySelection();
+    });
+
     pendingGridSelection = null;
 }
 
@@ -2230,7 +2421,6 @@ async function loadNoCoverageArea() {
         createNoCoverageLayer();
 
     } catch (error) {
-        logShareDebug('loadNoCoverageArea: failed', { message: error?.message });
     }
 }
 
@@ -2322,11 +2512,6 @@ function setupEventListeners() {
 document.addEventListener('DOMContentLoaded', function () {
     setupShareLinkUI();
     pendingGridSelection = getGridParamsFromUrl();
-    logShareDebug('DOMContentLoaded: initial share link state', {
-        href: window.location.href,
-        pendingGridSelection,
-        hasPending: Array.isArray(pendingGridSelection) && pendingGridSelection.length > 0
-    });
 
     initMap();
 
