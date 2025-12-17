@@ -75,6 +75,7 @@ let shareDownloadGeoJsonButton = null;
 let shareDownloadCsvButton = null;
 let shareClearSelectionButton = null;
 let shareZoomSelectionButton = null;
+let selectionCountDisplay = null;
 const selectedGridMap = new Map();
 const rectangleSelectState = {
     active: false,
@@ -1965,6 +1966,7 @@ function setupShareLinkUI() {
     shareLinkContainer = document.getElementById('share-link-container');
     if (!shareLinkContainer) return;
 
+    selectionCountDisplay = document.getElementById('selection-count');
     shareLinkInput = document.getElementById('share-link-input');
     shareLinkCopyButton = document.getElementById('share-link-copy');
     shareLinkFeedback = document.getElementById('share-link-feedback');
@@ -2051,6 +2053,12 @@ function showShareLink(selectionEntries, shareUrl, options = {}) {
 
     const count = selectionEntries.length;
     const primaryName = count === 1 ? selectionEntries[0].name : null;
+
+    // Update selection count display
+    if (selectionCountDisplay) {
+        const countText = count === 1 ? '1 polygon selected' : `${count} polygons selected`;
+        selectionCountDisplay.textContent = countText;
+    }
 
     if (shareLinkInput) {
         shareLinkInput.value = shareUrl;

@@ -223,6 +223,18 @@ body {
     display: none;
 }
 
+.selection-count {
+    font-size: 13px;
+    font-weight: 500;
+    color: #5b6575;
+    padding: 8px 10px;
+    background: #f4f6f9;
+    border-bottom: 1px solid #e1e4e8;
+    text-align: left;
+    margin: -12px -14px 0 -14px;
+    border-radius: 6px 6px 0 0;
+}
+
 #share-link-options {
     display: grid;
     grid-template-columns: repeat(4, minmax(68px, 1fr));
