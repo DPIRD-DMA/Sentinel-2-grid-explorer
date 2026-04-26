@@ -18,7 +18,7 @@ const CONFIG = {
 };
 
 // Application metadata
-const APP_VERSION = 'v1.1.0'; // Update this version string as needed
+const APP_VERSION = 'v1.2.0'; // Update this version string as needed
 
 function withVersionAttribution(baseText) {
     return `${baseText} <span class="map-version">${APP_VERSION}</span>`;
@@ -73,6 +73,7 @@ let pendingGridSelection = null;
 let shareLinkOptionsContainer = null;
 let shareDownloadGeoJsonButton = null;
 let shareDownloadCsvButton = null;
+let shareCopyNamesButton = null;
 let shareClearSelectionButton = null;
 let shareZoomSelectionButton = null;
 let selectionCountDisplay = null;
@@ -1863,6 +1864,23 @@ function getSelectedFeatures() {
         .filter(feature => !!feature);
 }
 
+async function copySelectedNamesToClipboard() {
+    const names = getSelectedNamesSorted();
+    if (names.length === 0) {
+        setShareLinkFeedback('Select grids to copy first');
+        return;
+    }
+
+    const text = names.join('\n');
+
+    try {
+        await navigator.clipboard.writeText(text);
+        setShareLinkFeedback(`Copied ${names.length} name${names.length === 1 ? '' : 's'}`);
+    } catch (error) {
+        setShareLinkFeedback('Could not copy to clipboard');
+    }
+}
+
 function downloadSelectionAsGeoJSON() {
     const features = getSelectedFeatures();
     if (features.length === 0) {
@@ -1973,6 +1991,7 @@ function setupShareLinkUI() {
     shareLinkOptionsContainer = document.getElementById('share-link-options');
     shareDownloadGeoJsonButton = document.getElementById('share-download-geojson');
     shareDownloadCsvButton = document.getElementById('share-download-csv');
+    shareCopyNamesButton = document.getElementById('share-copy-names');
     shareClearSelectionButton = document.getElementById('share-clear-selection');
     shareZoomSelectionButton = document.getElementById('share-zoom-selection');
 
@@ -2016,6 +2035,12 @@ function setupShareLinkUI() {
 
         shareLinkOptionsContainer.addEventListener('mouseleave', function () {
             clearHoverHighlight();
+        });
+    }
+
+    if (shareCopyNamesButton) {
+        shareCopyNamesButton.addEventListener('click', function () {
+            copySelectedNamesToClipboard();
         });
     }
 
