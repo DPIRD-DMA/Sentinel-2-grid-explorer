@@ -31,11 +31,23 @@
 </head>
 
 <body>
-    <section class="visually-hidden" aria-label="Sentinel-2 Grid Explorer overview">
+    <section id="intro-card" aria-label="Sentinel-2 Grid Explorer overview">
+        <button id="intro-card-close" type="button" aria-label="Dismiss introduction">×</button>
         <h1>Sentinel-2 Grid Explorer</h1>
-        <p>Interactive map to browse Sentinel-2 MGRS grid tiles, check coverage, and build exportable selections for
-            downstream analysis.</p>
+        <p>Interactive map for browsing Sentinel-2 MGRS grid tiles. Search by tile ID, click or
+            shift-drag to select tiles, then share a link or export your selection as GeoJSON or CSV.</p>
     </section>
+    <noscript>
+        <div class="noscript-fallback">
+            <h1>Sentinel-2 Grid Explorer</h1>
+            <p>Sentinel-2 Grid Explorer is an interactive web map for browsing the European Space Agency's
+                Sentinel-2 Military Grid Reference System (MGRS) tile footprints. Use it to find specific
+                tiles by ID, review coverage areas, build multi-tile selections by shift-dragging the map,
+                and export the resulting footprints as GeoJSON or CSV for downstream geospatial analysis.</p>
+            <p>This application requires JavaScript to render the map. Source code and documentation are
+                available on <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer">GitHub</a>.</p>
+        </div>
+    </noscript>
     <div id="map"></div>
 
     <!-- Loading indicator -->
@@ -56,7 +68,7 @@
         <div id="share-link-options" class="hidden"></div>
         <div id="share-link-input-row">
             <input id="share-link-input" type="text" readonly>
-            <button id="share-link-copy" type="button">Copy</button>
+            <button id="share-link-copy" type="button">Copy/Share</button>
         </div>
         <div class="share-link-actions">
             <button id="share-clear-selection" type="button" class="danger">Clear selection</button>

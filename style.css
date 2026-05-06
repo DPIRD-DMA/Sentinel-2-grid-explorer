@@ -493,6 +493,92 @@ body {
     border: 0;
 }
 
+/* Intro / about card (visible by default for SEO + first-time users) */
+#intro-card {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    width: min(420px, calc(100vw - 140px));
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #c9ccd3;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    padding: 10px 32px 10px 14px;
+    color: #1f2b38;
+}
+
+#intro-card.hidden {
+    display: none;
+}
+
+#intro-card h1 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 4px 0;
+    color: #1f2b38;
+}
+
+#intro-card p {
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 0;
+    color: #5b6575;
+}
+
+#intro-card-close {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #5b6575;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+#intro-card-close:hover,
+#intro-card-close:focus {
+    background: #eef1f5;
+    color: #1f2b38;
+    outline: none;
+}
+
+/* Noscript fallback — only visible when JS is disabled */
+.noscript-fallback {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: #ffffff;
+    padding: 40px;
+    overflow: auto;
+    color: #1f2b38;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.noscript-fallback h1 {
+    margin-bottom: 16px;
+}
+
+.noscript-fallback p {
+    margin-bottom: 12px;
+    max-width: 640px;
+}
+
+@media (max-width: 768px) {
+    #intro-card {
+        top: 60px;
+        width: calc(100vw - 20px);
+    }
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     #loading {

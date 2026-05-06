@@ -18,7 +18,7 @@ const CONFIG = {
 };
 
 // Application metadata
-const APP_VERSION = 'v1.2.0'; // Update this version string as needed
+const APP_VERSION = 'v1.3.0'; // Update this version string as needed
 
 function withVersionAttribution(baseText) {
     return `${baseText} <span class="map-version">${APP_VERSION}</span>`;
@@ -2541,9 +2541,39 @@ function setupEventListeners() {
     map.on('zoomend moveend', debouncedUpdate);
 }
 
+function setupIntroCard() {
+    const card = document.getElementById('intro-card');
+    const closeButton = document.getElementById('intro-card-close');
+    if (!card) return;
+
+    let dismissed = false;
+    try {
+        dismissed = localStorage.getItem('introCardDismissed') === '1';
+    } catch (error) {
+        dismissed = false;
+    }
+
+    if (dismissed) {
+        card.classList.add('hidden');
+        return;
+    }
+
+    if (closeButton) {
+        closeButton.addEventListener('click', function () {
+            card.classList.add('hidden');
+            try {
+                localStorage.setItem('introCardDismissed', '1');
+            } catch (error) {
+                // Ignore storage failures (private mode, quota, etc.)
+            }
+        });
+    }
+}
+
 // Initialise when DOM is ready
 document.addEventListener('DOMContentLoaded', function () {
     setupShareLinkUI();
+    setupIntroCard();
     pendingGridSelection = getGridParamsFromUrl();
 
     initMap();
