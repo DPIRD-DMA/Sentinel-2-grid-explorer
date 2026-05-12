@@ -28,26 +28,76 @@
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
+
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Sentinel-2 Grid Explorer",
+        "url": "https://dpird-dma.github.io/Sentinel-2-grid-explorer/",
+        "applicationCategory": "GeographicInformationSystem",
+        "operatingSystem": "Any (web browser)",
+        "description": "Interactive web map for browsing the European Space Agency's Sentinel-2 Military Grid Reference System (MGRS) tile footprints. Search tiles by MGRS ID, build multi-tile selections, and export footprints as GeoJSON or CSV.",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+        },
+        "author": {
+            "@type": "Organization",
+            "name": "Department of Primary Industries and Regional Development (DPIRD), Western Australia",
+            "url": "https://www.dpird.wa.gov.au/"
+        },
+        "sourceOrganization": {
+            "@type": "Organization",
+            "name": "DPIRD Data Modelling and Analysis"
+        },
+        "codeRepository": "https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer",
+        "license": "https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer/blob/main/LICENSE"
+    }
+    </script>
 </head>
 
 <body>
     <section id="intro-card" aria-label="Sentinel-2 Grid Explorer overview">
         <button id="intro-card-close" type="button" aria-label="Dismiss introduction">×</button>
         <h1>Sentinel-2 Grid Explorer</h1>
-        <p>Interactive map for browsing Sentinel-2 MGRS grid tiles. Search by tile ID, click or
-            shift-drag to select tiles, then share a link or export your selection as GeoJSON or CSV.</p>
+        <p class="intro-summary">Interactive map for browsing the European Space Agency's
+            <strong>Sentinel-2</strong> Military Grid Reference System
+            (<abbr title="Military Grid Reference System">MGRS</abbr>) tile footprints. Search by tile ID,
+            click or shift-drag to select tiles, then share a link or export your selection as GeoJSON or CSV.
+        </p>
+        <details class="intro-details">
+            <summary>About this tool</summary>
+            <div class="intro-details-body">
+                <p>Sentinel-2 is a wide-swath, high-resolution, multi-spectral Earth observation mission
+                    operated by the European Space Agency (ESA) as part of the Copernicus programme. Its
+                    optical imagery is delivered in 100 km × 100 km granules indexed using the Military
+                    Grid Reference System (MGRS), where each tile has a unique alphanumeric identifier
+                    such as <code>50HMH</code> or <code>01CCV</code>.</p>
+                <p>This explorer helps Earth observation analysts, remote sensing researchers, and GIS
+                    users plan acquisitions and prepare datasets. You can:</p>
+                <ul>
+                    <li>Locate any Sentinel-2 MGRS tile visually on an interactive Leaflet map</li>
+                    <li>Search for tiles by their MGRS identifier</li>
+                    <li>Build a multi-tile area-of-interest by clicking individual tiles or shift-dragging
+                        a rectangle</li>
+                    <li>Inspect tile coverage details on hover, including the polygon vertex count</li>
+                    <li>Export the selected footprints as <strong>GeoJSON</strong> or <strong>CSV</strong>
+                        for use in QGIS, ArcGIS, geopandas, rasterio, or any downstream geospatial
+                        pipeline</li>
+                    <li>Copy a plain list of tile names for use in scripts and acquisition requests</li>
+                    <li>Share a selection with colleagues via a permalink URL</li>
+                </ul>
+                <p>Source code, issue tracking, and documentation are available on
+                    <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer" rel="noopener"
+                        target="_blank">GitHub</a>. Built and maintained by the Data Modelling and
+                    Analysis team at the Department of Primary Industries and Regional Development
+                    (DPIRD), Government of Western Australia.
+                </p>
+            </div>
+        </details>
     </section>
-    <noscript>
-        <div class="noscript-fallback">
-            <h1>Sentinel-2 Grid Explorer</h1>
-            <p>Sentinel-2 Grid Explorer is an interactive web map for browsing the European Space Agency's
-                Sentinel-2 Military Grid Reference System (MGRS) tile footprints. Use it to find specific
-                tiles by ID, review coverage areas, build multi-tile selections by shift-dragging the map,
-                and export the resulting footprints as GeoJSON or CSV for downstream geospatial analysis.</p>
-            <p>This application requires JavaScript to render the map. Source code and documentation are
-                available on <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer">GitHub</a>.</p>
-        </div>
-    </noscript>
     <div id="map"></div>
 
     <!-- Loading indicator -->

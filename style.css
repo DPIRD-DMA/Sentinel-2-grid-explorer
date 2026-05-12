@@ -500,12 +500,14 @@ body {
     left: 50%;
     transform: translateX(-50%);
     z-index: 1000;
-    width: min(420px, calc(100vw - 140px));
-    background: rgba(255, 255, 255, 0.95);
+    width: min(440px, calc(100vw - 140px));
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
+    background: rgba(255, 255, 255, 0.96);
     border: 1px solid #c9ccd3;
     border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-    padding: 10px 32px 10px 14px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+    padding: 12px 36px 12px 16px;
     color: #1f2b38;
 }
 
@@ -514,30 +516,123 @@ body {
 }
 
 #intro-card h1 {
-    font-size: 14px;
+    font-size: 17px;
     font-weight: 600;
-    margin: 0 0 4px 0;
+    margin: 0 0 6px 0;
     color: #1f2b38;
+    line-height: 1.3;
 }
 
 #intro-card p {
-    font-size: 12px;
-    line-height: 1.4;
+    font-size: 13px;
+    line-height: 1.45;
     margin: 0;
+    color: #3a4654;
+}
+
+#intro-card .intro-summary {
+    margin-bottom: 8px;
+}
+
+#intro-card .intro-summary strong {
+    color: #1f2b38;
+}
+
+#intro-card abbr {
+    text-decoration: none;
+    border-bottom: 1px dotted #8a93a0;
+    cursor: help;
+}
+
+.intro-details {
+    margin-top: 4px;
+    border-top: 1px solid #e4e7ec;
+    padding-top: 8px;
+}
+
+.intro-details > summary {
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: #2f6fcc;
+    list-style: none;
+    padding: 2px 0;
+    user-select: none;
+}
+
+.intro-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.intro-details > summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform 0.15s ease;
     color: #5b6575;
+}
+
+.intro-details[open] > summary::before {
+    content: "▾ ";
+}
+
+.intro-details > summary:hover,
+.intro-details > summary:focus-visible {
+    color: #1f4f9e;
+    outline: none;
+}
+
+.intro-details-body {
+    padding-top: 8px;
+}
+
+.intro-details-body p {
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin: 0 0 8px 0;
+    color: #3a4654;
+}
+
+.intro-details-body ul {
+    margin: 0 0 8px 18px;
+    padding: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #3a4654;
+}
+
+.intro-details-body li {
+    margin-bottom: 3px;
+}
+
+.intro-details-body code {
+    background: #f1f3f6;
+    border: 1px solid #e1e4e8;
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 11.5px;
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    color: #1f2b38;
+}
+
+.intro-details-body a {
+    color: #2f6fcc;
+}
+
+.intro-details-body a:hover {
+    color: #1f4f9e;
 }
 
 #intro-card-close {
     position: absolute;
-    top: 4px;
-    right: 6px;
-    width: 22px;
-    height: 22px;
+    top: 6px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
     padding: 0;
     border: none;
     background: transparent;
     color: #5b6575;
-    font-size: 18px;
+    font-size: 20px;
     line-height: 1;
     cursor: pointer;
     border-radius: 3px;
@@ -548,28 +643,6 @@ body {
     background: #eef1f5;
     color: #1f2b38;
     outline: none;
-}
-
-/* Noscript fallback — only visible when JS is disabled */
-.noscript-fallback {
-    position: fixed;
-    inset: 0;
-    z-index: 2000;
-    background: #ffffff;
-    padding: 40px;
-    overflow: auto;
-    color: #1f2b38;
-    font-size: 15px;
-    line-height: 1.5;
-}
-
-.noscript-fallback h1 {
-    margin-bottom: 16px;
-}
-
-.noscript-fallback p {
-    margin-bottom: 12px;
-    max-width: 640px;
 }
 
 @media (max-width: 768px) {
