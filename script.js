@@ -18,7 +18,7 @@ const CONFIG = {
 };
 
 // Application metadata
-const APP_VERSION = 'v1.3.0'; // Update this version string as needed
+const APP_VERSION = 'v1.4.0'; // Update this version string as needed
 
 function withVersionAttribution(baseText) {
     return `${baseText} <span class="map-version">${APP_VERSION}</span>`;
@@ -1864,21 +1864,48 @@ function getSelectedFeatures() {
         .filter(feature => !!feature);
 }
 
-async function copySelectedNamesToClipboard() {
+async function copySelectedNamesToClipboard(format = 'lines') {
     const names = getSelectedNamesSorted();
     if (names.length === 0) {
         setShareLinkFeedback('Select grids to copy first');
         return;
     }
 
-    const text = names.join('\n');
+    const text = format === 'python'
+        ? '[' + names.map(name => `"${name}"`).join(', ') + ']'
+        : names.join('\n');
 
     try {
         await navigator.clipboard.writeText(text);
-        setShareLinkFeedback(`Copied ${names.length} name${names.length === 1 ? '' : 's'}`);
+        const suffix = format === 'python' ? ' as Python list' : '';
+        setShareLinkFeedback(`Copied ${names.length} name${names.length === 1 ? '' : 's'}${suffix}`);
     } catch (error) {
         setShareLinkFeedback('Could not copy to clipboard');
     }
+}
+
+function showCopyFormatPopup() {
+    const popup = document.getElementById('copy-format-popup');
+    if (!popup) return;
+    popup.classList.remove('hidden');
+    if (shareCopyNamesButton) {
+        shareCopyNamesButton.setAttribute('aria-expanded', 'true');
+    }
+    const firstItem = popup.querySelector('button[data-format]');
+    if (firstItem) firstItem.focus();
+}
+
+function hideCopyFormatPopup() {
+    const popup = document.getElementById('copy-format-popup');
+    if (popup) popup.classList.add('hidden');
+    if (shareCopyNamesButton) {
+        shareCopyNamesButton.setAttribute('aria-expanded', 'false');
+    }
+}
+
+function isCopyFormatPopupOpen() {
+    const popup = document.getElementById('copy-format-popup');
+    return !!popup && !popup.classList.contains('hidden');
 }
 
 function downloadSelectionAsGeoJSON() {
@@ -2039,10 +2066,47 @@ function setupShareLinkUI() {
     }
 
     if (shareCopyNamesButton) {
-        shareCopyNamesButton.addEventListener('click', function () {
-            copySelectedNamesToClipboard();
+        shareCopyNamesButton.addEventListener('click', function (event) {
+            event.stopPropagation();
+            if (getSelectedNamesSorted().length === 0) {
+                setShareLinkFeedback('Select grids to copy first');
+                return;
+            }
+            if (isCopyFormatPopupOpen()) {
+                hideCopyFormatPopup();
+            } else {
+                showCopyFormatPopup();
+            }
         });
     }
+
+    const copyFormatPopup = document.getElementById('copy-format-popup');
+    if (copyFormatPopup) {
+        copyFormatPopup.addEventListener('click', function (event) {
+            const formatButton = event.target.closest('button[data-format]');
+            if (!formatButton) return;
+            event.stopPropagation();
+            const format = formatButton.dataset.format;
+            hideCopyFormatPopup();
+            copySelectedNamesToClipboard(format);
+            if (shareCopyNamesButton) shareCopyNamesButton.focus();
+        });
+    }
+
+    document.addEventListener('click', function (event) {
+        if (!isCopyFormatPopupOpen()) return;
+        const popup = document.getElementById('copy-format-popup');
+        if (popup && popup.contains(event.target)) return;
+        if (shareCopyNamesButton && shareCopyNamesButton.contains(event.target)) return;
+        hideCopyFormatPopup();
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key !== 'Escape') return;
+        if (!isCopyFormatPopupOpen()) return;
+        hideCopyFormatPopup();
+        if (shareCopyNamesButton) shareCopyNamesButton.focus();
+    });
 
     if (shareDownloadGeoJsonButton) {
         shareDownloadGeoJsonButton.addEventListener('click', function () {

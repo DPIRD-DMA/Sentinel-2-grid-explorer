@@ -126,9 +126,15 @@
             <span id="share-link-feedback" aria-live="polite"></span>
         </div>
         <div class="share-export-actions">
-            <button id="share-copy-names" type="button">Copy Names</button>
+            <button id="share-copy-names" type="button" aria-haspopup="menu"
+                aria-expanded="false" aria-controls="copy-format-popup">Copy Names</button>
             <button id="share-download-geojson" type="button">Download GeoJSON</button>
             <button id="share-download-csv" type="button">Download CSV</button>
+            <div id="copy-format-popup" class="copy-format-popup hidden" role="menu"
+                aria-label="Choose copy format">
+                <button type="button" data-format="lines" role="menuitem">Lines (one per row)</button>
+                <button type="button" data-format="python" role="menuitem">Python list</button>
+            </div>
         </div>
     </div>
 

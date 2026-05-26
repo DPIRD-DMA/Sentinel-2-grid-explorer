@@ -392,8 +392,47 @@ body {
 }
 
 .share-export-actions {
+    position: relative;
     display: flex;
     gap: 8px;
+}
+
+.copy-format-popup {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    min-width: 160px;
+    background: #ffffff;
+    border: 1px solid #c9ccd3;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 1500;
+}
+
+.copy-format-popup.hidden {
+    display: none;
+}
+
+.copy-format-popup button {
+    flex: 0 0 auto;
+    text-align: left;
+    border: none;
+    background: transparent;
+    padding: 7px 10px;
+    font-size: 12px;
+    color: #1f2b38;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.copy-format-popup button:hover,
+.copy-format-popup button:focus-visible {
+    background: #e9f1ff;
+    outline: none;
 }
 
 .share-export-actions button {
