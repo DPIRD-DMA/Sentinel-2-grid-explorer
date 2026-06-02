@@ -18,7 +18,7 @@ const CONFIG = {
 };
 
 // Application metadata
-const APP_VERSION = 'v1.4.0'; // Update this version string as needed
+const APP_VERSION = 'v1.4.1'; // Update this version string as needed
 
 function withVersionAttribution(baseText) {
     return `${baseText} <span class="map-version">${APP_VERSION}</span>`;

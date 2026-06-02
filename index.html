@@ -5,8 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
-        content="Explore Sentinel-2 MGRS grid tiles in an interactive map, search by tile ID, review coverage details, and export selections as GeoJSON or CSV.">
+        content="Explore Sentinel-2 MGRS grid tiles in an interactive map, search by tile ID, view coverage overlays, and export selections as GeoJSON or CSV.">
+    <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dpird-dma.github.io/Sentinel-2-grid-explorer/">
+    <link rel="sitemap" type="application/xml" href="https://dpird-dma.github.io/Sentinel-2-grid-explorer/sitemap.xml">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Sentinel-2 Grid Explorer">
     <meta property="og:title" content="Sentinel-2 Grid Explorer">
@@ -82,18 +84,16 @@
                     <li>Search for tiles by their MGRS identifier</li>
                     <li>Build a multi-tile area-of-interest by clicking individual tiles or shift-dragging
                         a rectangle</li>
-                    <li>Inspect tile coverage details on hover, including the polygon vertex count</li>
+                    <li>Hover over tile footprints to highlight them on the map</li>
                     <li>Export the selected footprints as <strong>GeoJSON</strong> or <strong>CSV</strong>
                         for use in QGIS, ArcGIS, geopandas, rasterio, or any downstream geospatial
                         pipeline</li>
-                    <li>Copy a plain list of tile names for use in scripts and acquisition requests</li>
+                    <li>Copy a plain list of tile names for use in scripts</li>
                     <li>Share a selection with colleagues via a permalink URL</li>
                 </ul>
                 <p>Source code, issue tracking, and documentation are available on
                     <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer" rel="noopener"
-                        target="_blank">GitHub</a>. Built and maintained by the Data Modelling and
-                    Analysis team at the Department of Primary Industries and Regional Development
-                    (DPIRD), Government of Western Australia.
+                        target="_blank">GitHub</a>.
                 </p>
             </div>
         </details>
@@ -143,6 +143,17 @@
 
     <!-- Custom JavaScript -->
     <script src="script.js"></script>
+    <noscript>
+        <section class="noscript-content" aria-label="Sentinel-2 Grid Explorer no-script overview">
+            <h2>Sentinel-2 Grid Explorer requires JavaScript for the map</h2>
+            <p>This page provides an interactive Leaflet map of Sentinel-2 MGRS tile footprints. Enable
+                JavaScript to search tile IDs, select footprints, create share links, and export selections
+                as GeoJSON or CSV.</p>
+            <p>The project source and static datasets are available from the
+                <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer">Sentinel-2 Grid Explorer
+                    GitHub repository</a>.</p>
+        </section>
+    </noscript>
 </body>
 
 </html>

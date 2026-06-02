@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://dpird-dma.github.io/Sentinel-2-grid-explorer/sitemap.xml
