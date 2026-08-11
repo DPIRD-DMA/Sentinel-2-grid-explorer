@@ -18,7 +18,7 @@ const CONFIG = {
 };
 
 // Application metadata
-const APP_VERSION = 'v1.4.1'; // Update this version string as needed
+const APP_VERSION = 'v1.5.0'; // Update this version string as needed
 
 function withVersionAttribution(baseText) {
     return `${baseText} <span class="map-version">${APP_VERSION}</span>`;
@@ -212,7 +212,7 @@ async function loadGridData() {
         hideLoading();
 
     } catch (error) {
-        showError('Failed to load Sentinel-2 grid data. Please check the file path.');
+        showLoadNotice('The tile footprints could not be loaded. Reload the page to try again — the guide below the map is still available.');
     }
 }
 
@@ -1822,6 +1822,9 @@ function updateAddressBarWithSelection(gridNames) {
         const url = new URL(window.location.href);
         url.searchParams.delete('grid');
         url.searchParams.delete('grids');
+        // Drop any in-page anchor (e.g. #guide) so a shared selection opens on
+        // the map rather than scrolled down to the written guide.
+        url.hash = '';
 
         if (upperSorted.length === 1) {
             url.searchParams.set('grid', upperSorted[0]);
@@ -1839,7 +1842,6 @@ function updateAddressBarWithSelection(gridNames) {
             ? window.location.origin
             : '';
         const basePath = `${origin}${window.location.pathname}`;
-        const hash = window.location.hash || '';
 
         let query = '';
         if (upperSorted.length === 1) {
@@ -1848,7 +1850,7 @@ function updateAddressBarWithSelection(gridNames) {
             query = `?grids=${encodeURIComponent(upperSorted.join(','))}`;
         }
 
-        shareUrl = `${basePath}${query}${hash}`;
+        shareUrl = `${basePath}${query}`;
 
         if (window.history && window.history.replaceState) {
             window.history.replaceState({}, '', shareUrl);
@@ -2573,14 +2575,19 @@ function hideLoading() {
     document.getElementById('loading').classList.add('hidden');
 }
 
-function showError(message) {
+// Replaces the loading spinner with a plain notice. Deliberately avoids
+// error-page wording ("Error", "Failed", "Not found"): search engines treat a
+// 200 response whose rendered text reads like an error as a soft 404.
+function showLoadNotice(message) {
     const loading = document.getElementById('loading');
-    loading.innerHTML = `
-        <div style="color: #e74c3c;">
-            <h3>Error</h3>
-            <p>${message}</p>
-        </div>
-    `;
+    if (!loading) return;
+
+    loading.innerHTML = '';
+
+    const notice = document.createElement('p');
+    notice.className = 'load-notice';
+    notice.textContent = message;
+    loading.appendChild(notice);
 }
 
 // Utility functions

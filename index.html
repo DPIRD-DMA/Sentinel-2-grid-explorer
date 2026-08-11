@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
-        content="Explore Sentinel-2 MGRS grid tiles in an interactive map, search by tile ID, view coverage overlays, and export selections as GeoJSON or CSV.">
+        content="Find the Sentinel-2 MGRS tile that covers your area. Interactive map of every Sentinel-2 tile footprint, with tile ID search, multi-tile selection, share links, and GeoJSON or CSV export — plus a guide to reading MGRS tile IDs.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://dpird-dma.github.io/Sentinel-2-grid-explorer/">
     <link rel="sitemap" type="application/xml" href="https://dpird-dma.github.io/Sentinel-2-grid-explorer/sitemap.xml">
@@ -58,102 +58,258 @@
         "license": "https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer/blob/main/LICENSE"
     }
     </script>
+
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {
+                "@type": "Question",
+                "name": "How do you read a Sentinel-2 MGRS tile ID?",
+                "acceptedAnswer": {
+                    "@type": "Answer",
+                    "text": "A Sentinel-2 tile ID such as 50HLK has three parts: the UTM zone number (50), the eight-degree latitude band letter (H, lettered C to X from 80 degrees south to 84 degrees north, skipping I and O), and the two letters identifying the 100 km square within that zone and band (LK). In Sentinel-2 product names the identifier is prefixed with T, as in T50HLK."
+                }
+            },
+            {
+                "@type": "Question",
+                "name": "Why do neighbouring Sentinel-2 tiles overlap?",
+                "acceptedAnswer": {
+                    "@type": "Answer",
+                    "text": "Sentinel-2 granules are 110 km by 110 km ortho-images laid out on a 100 km MGRS grid, so each tile carries roughly 10 km of overlap with its neighbours. A point near a tile edge is often present in two or more tiles."
+                }
+            },
+            {
+                "@type": "Question",
+                "name": "Where can I download Sentinel-2 imagery once I know the tile ID?",
+                "acceptedAnswer": {
+                    "@type": "Answer",
+                    "text": "Sentinel-2 imagery is free and open from the Copernicus Data Space Ecosystem, and is mirrored by AWS Open Data, Google Earth Engine, and Microsoft Planetary Computer. Most of those catalogues let you filter directly on the MGRS tile ID."
+                }
+            },
+            {
+                "@type": "Question",
+                "name": "What is the difference between Sentinel-2 L1C and L2A products?",
+                "acceptedAnswer": {
+                    "@type": "Answer",
+                    "text": "Both product levels use the same MGRS tiling, so the same tile footprints apply. Level-1C is top-of-atmosphere reflectance, while Level-2A adds an atmospheric correction to give bottom-of-atmosphere surface reflectance."
+                }
+            }
+        ]
+    }
+    </script>
 </head>
 
 <body>
-    <section id="intro-card" aria-label="Sentinel-2 Grid Explorer overview">
-        <button id="intro-card-close" type="button" aria-label="Dismiss introduction">×</button>
-        <h1>Sentinel-2 Grid Explorer</h1>
-        <p class="intro-summary">Interactive map for browsing the European Space Agency's
-            <strong>Sentinel-2</strong> Military Grid Reference System
-            (<abbr title="Military Grid Reference System">MGRS</abbr>) tile footprints. Search by tile ID,
-            click or shift-drag to select tiles, then share a link or export your selection as GeoJSON or CSV.
-        </p>
-        <details class="intro-details">
-            <summary>About this tool</summary>
-            <div class="intro-details-body">
-                <p>Sentinel-2 is a wide-swath, high-resolution, multi-spectral Earth observation mission
-                    operated by the European Space Agency (ESA) as part of the Copernicus programme. Its
-                    optical imagery is delivered in 100 km × 100 km granules indexed using the Military
-                    Grid Reference System (MGRS), where each tile has a unique alphanumeric identifier
-                    such as <code>50HMH</code> or <code>01CCV</code>.</p>
-                <p>This explorer helps Earth observation analysts, remote sensing researchers, and GIS
-                    users plan acquisitions and prepare datasets. You can:</p>
-                <ul>
-                    <li>Locate any Sentinel-2 MGRS tile visually on an interactive Leaflet map</li>
-                    <li>Search for tiles by their MGRS identifier</li>
-                    <li>Build a multi-tile area-of-interest by clicking individual tiles or shift-dragging
-                        a rectangle</li>
-                    <li>Hover over tile footprints to highlight them on the map</li>
-                    <li>Export the selected footprints as <strong>GeoJSON</strong> or <strong>CSV</strong>
-                        for use in QGIS, ArcGIS, geopandas, rasterio, or any downstream geospatial
-                        pipeline</li>
-                    <li>Copy a plain list of tile names for use in scripts</li>
-                    <li>Share a selection with colleagues via a permalink URL</li>
-                </ul>
-                <p>Source code, issue tracking, and documentation are available on
-                    <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer" rel="noopener"
-                        target="_blank">GitHub</a>.
-                </p>
+    <div id="app-shell">
+        <section id="intro-card" aria-label="Sentinel-2 Grid Explorer overview">
+            <button id="intro-card-close" type="button" aria-label="Dismiss introduction">×</button>
+            <h1>Sentinel-2 Grid Explorer</h1>
+            <p class="intro-summary">Interactive map for browsing the European Space Agency's
+                <strong>Sentinel-2</strong> Military Grid Reference System
+                (<abbr title="Military Grid Reference System">MGRS</abbr>) tile footprints. Search by tile ID,
+                click or shift-drag to select tiles, then share a link or export your selection as GeoJSON or CSV.
+            </p>
+            <a class="intro-guide-link" href="#guide">Read the guide below the map ↓</a>
+        </section>
+        <div id="map"></div>
+
+        <!-- Loading indicator -->
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Loading Sentinel-2 grids...</p>
+        </div>
+
+        <!-- Search box -->
+        <div id="search-container">
+            <input type="text" id="grid-search" placeholder="Search grid by name (e.g. 01CCV)" autocomplete="off">
+            <div id="search-results"></div>
+        </div>
+
+        <!-- Share link panel -->
+        <div id="share-link-container" class="hidden">
+            <div id="selection-count" class="selection-count"></div>
+            <div id="share-link-options" class="hidden"></div>
+            <div id="share-link-input-row">
+                <input id="share-link-input" type="text" readonly>
+                <button id="share-link-copy" type="button">Copy/Share</button>
             </div>
-        </details>
-    </section>
-    <div id="map"></div>
-
-    <!-- Loading indicator -->
-    <div id="loading">
-        <div class="spinner"></div>
-        <p>Loading Sentinel-2 grids...</p>
-    </div>
-
-    <!-- Search box -->
-    <div id="search-container">
-        <input type="text" id="grid-search" placeholder="Search grid by name (e.g. 01CCV)" autocomplete="off">
-        <div id="search-results"></div>
-    </div>
-
-    <!-- Share link panel -->
-    <div id="share-link-container" class="hidden">
-        <div id="selection-count" class="selection-count"></div>
-        <div id="share-link-options" class="hidden"></div>
-        <div id="share-link-input-row">
-            <input id="share-link-input" type="text" readonly>
-            <button id="share-link-copy" type="button">Copy/Share</button>
-        </div>
-        <div class="share-link-actions">
-            <button id="share-clear-selection" type="button" class="danger">Clear selection</button>
-            <button id="share-zoom-selection" type="button">Zoom to selection</button>
-            <span id="share-link-feedback" aria-live="polite"></span>
-        </div>
-        <div class="share-export-actions">
-            <button id="share-copy-names" type="button" aria-haspopup="menu"
-                aria-expanded="false" aria-controls="copy-format-popup">Copy Names</button>
-            <button id="share-download-geojson" type="button">Download GeoJSON</button>
-            <button id="share-download-csv" type="button">Download CSV</button>
-            <div id="copy-format-popup" class="copy-format-popup hidden" role="menu"
-                aria-label="Choose copy format">
-                <button type="button" data-format="lines" role="menuitem">Lines (one per row)</button>
-                <button type="button" data-format="python" role="menuitem">Python list</button>
+            <div class="share-link-actions">
+                <button id="share-clear-selection" type="button" class="danger">Clear selection</button>
+                <button id="share-zoom-selection" type="button">Zoom to selection</button>
+                <span id="share-link-feedback" aria-live="polite"></span>
+            </div>
+            <div class="share-export-actions">
+                <button id="share-copy-names" type="button" aria-haspopup="menu"
+                    aria-expanded="false" aria-controls="copy-format-popup">Copy Names</button>
+                <button id="share-download-geojson" type="button">Download GeoJSON</button>
+                <button id="share-download-csv" type="button">Download CSV</button>
+                <div id="copy-format-popup" class="copy-format-popup hidden" role="menu"
+                    aria-label="Choose copy format">
+                    <button type="button" data-format="lines" role="menuitem">Lines (one per row)</button>
+                    <button type="button" data-format="python" role="menuitem">Python list</button>
+                </div>
             </div>
         </div>
     </div>
+
+    <noscript>
+        <section class="noscript-content" aria-label="Sentinel-2 Grid Explorer no-script notice">
+            <h2>The interactive map needs JavaScript</h2>
+            <p>The map above is a Leaflet application and needs JavaScript to draw tile footprints, run
+                searches, and build exports. The written guide below explains the Sentinel-2 MGRS grid and
+                works without JavaScript.</p>
+        </section>
+    </noscript>
+
+    <main id="page-content">
+        <h2 id="guide">What this tool does</h2>
+        <p class="content-lead">Sentinel-2 Grid Explorer is a free, browser-based map of every Sentinel-2
+            MGRS tile footprint. It answers the everyday questions that come up when planning a Sentinel-2
+            download: <em>which tile covers my study area?</em>, <em>what are the neighbouring tile IDs?</em>,
+            and <em>how do I get that list of tiles into my processing script?</em></p>
+        <p>Nothing is uploaded and no account is needed. The tile geometries are loaded into your browser as
+            a static dataset, and every selection, export, and share link is produced locally on your
+            machine.</p>
+
+        <h2>Sentinel-2 and the MGRS tiling grid</h2>
+        <p>Sentinel-2 is a wide-swath, high-resolution, multi-spectral Earth observation mission operated by
+            the European Space Agency (ESA) as part of the European Union's Copernicus programme. Its
+            MultiSpectral Instrument (MSI) records 13 spectral bands at 10 m, 20 m, and 60 m resolution
+            across a 290 km swath, and the satellite constellation revisits the equator every five days.</p>
+        <p>Rather than distributing whole orbits, ESA cuts the imagery into fixed tiles so that the same
+            patch of ground always arrives with the same footprint and projection. Those tiles are indexed
+            with the Military Grid Reference System (MGRS): each granule is a 110 km × 110 km ortho-image in
+            the UTM/WGS 84 projection, named after the 100 km MGRS square it sits on. Because the granules
+            are slightly larger than the squares they are named for, <strong>adjacent tiles overlap</strong>
+            — a point near a tile edge is often present in two or more tiles.</p>
+
+        <h3>How to read a Sentinel-2 tile ID</h3>
+        <p>A tile ID such as <code>50HLK</code> packs three pieces of information into five characters:</p>
+        <div class="table-scroll">
+            <table class="tile-id-table">
+                <thead>
+                    <tr>
+                        <th>Part</th>
+                        <th>Example</th>
+                        <th>Meaning</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>UTM zone</td>
+                        <td><code>50</code></td>
+                        <td>One of the 60 six-degree-wide UTM longitude zones, numbered from 1 at 180° W.</td>
+                    </tr>
+                    <tr>
+                        <td>Latitude band</td>
+                        <td><code>H</code></td>
+                        <td>An eight-degree latitude band lettered C to X from 80° S to 84° N. The letters
+                            I and O are skipped so they cannot be confused with 1 and 0.</td>
+                    </tr>
+                    <tr>
+                        <td>100 km square</td>
+                        <td><code>LK</code></td>
+                        <td>Column and row letters identifying the 100 km square within that zone and band.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p>So <code>50HLK</code> is a tile in UTM zone 50, latitude band H — the grid square covering Perth,
+            Western Australia. In Sentinel-2 product names the identifier is prefixed with <code>T</code>
+            and appears as the <code>T50HLK</code> component, between the relative orbit number and the
+            product discriminator.</p>
+
+        <h2>Using the map</h2>
+        <h3>Finding a tile</h3>
+        <ul>
+            <li><strong>Search by ID</strong> — type an MGRS identifier such as <code>01CCV</code> into the
+                search box at the top left, then pick a result to zoom straight to that tile.</li>
+            <li><strong>Browse visually</strong> — pan and zoom the map. Tile outlines are drawn from zoom
+                level 3, and tile labels appear once you zoom in past level 8.</li>
+            <li><strong>Check coverage gaps</strong> — the "Coverage Areas" overlay, shown by default and
+                toggled from the layer control, shades regions with no routine Sentinel-2 acquisition,
+                mostly open ocean. The same control switches the basemap between OpenStreetMap and
+                satellite imagery.</li>
+        </ul>
+
+        <h3>Building a selection</h3>
+        <ul>
+            <li>Click a tile to add it to the selection; click it again to remove it.</li>
+            <li>Hold <strong>Shift</strong> and drag a rectangle to select every tile it touches — the
+                quickest way to grab a study area that spans a dozen tiles.</li>
+            <li>Hover a footprint to highlight it before committing to the click.</li>
+            <li>Use <strong>Zoom to selection</strong> to frame everything you have picked, or
+                <strong>Clear selection</strong> to start again.</li>
+        </ul>
+
+        <h3>Getting the selection out</h3>
+        <ul>
+            <li><strong>Copy Names</strong> copies just the tile IDs, either one per line or as a
+                ready-to-paste Python list such as <code>["50HLK", "50HMK"]</code>.</li>
+            <li><strong>Download GeoJSON</strong> writes a <code>FeatureCollection</code> of the selected
+                tile polygons, ready to drop into QGIS, ArcGIS Pro, geopandas, or an <code>ogr2ogr</code>
+                pipeline.</li>
+            <li><strong>Download CSV</strong> writes one row per tile with the tile <code>name</code> plus
+                its <code>centroid_lat</code> and <code>centroid_lng</code> — convenient when you only need
+                a list of identifiers and rough locations.</li>
+            <li><strong>Copy/Share</strong> produces a permalink that encodes the selection in the URL, for
+                example <code>?grid=50HLK</code> for a single tile or <code>?grids=50HLK,50HMK</code> for
+                several. Anyone opening the link sees the same tiles selected.</li>
+        </ul>
+
+        <h2>Common questions</h2>
+        <h3>Why do neighbouring tiles overlap?</h3>
+        <p>Sentinel-2 granules are 110 km across but are laid out on a 100 km grid, so each tile carries
+            roughly 10 km of overlap with its neighbours. When you mosaic tiles you will need to decide
+            which one wins in the overlap, and when you count downloads remember that a small area of
+            interest straddling an edge may require several tiles.</p>
+
+        <h3>Why does one tile ID appear in more than one place?</h3>
+        <p>Tiles that straddle the antimeridian at 180° longitude are split into separate polygons so they
+            draw correctly on a flat map. They are still a single Sentinel-2 tile.</p>
+
+        <h3>Where do I download the actual imagery?</h3>
+        <p>This tool maps the grid, not the pixels. Once you know your tile IDs, the imagery itself is free
+            and open from the <a href="https://dataspace.copernicus.eu/" rel="noopener" target="_blank">Copernicus
+            Data Space Ecosystem</a>, and mirrored by several cloud providers including AWS Open Data,
+            Google Earth Engine, and Microsoft Planetary Computer. Most of those catalogues let you filter
+            directly on the MGRS tile ID.</p>
+
+        <h3>What is the difference between L1C and L2A?</h3>
+        <p>Both product levels use the same MGRS tiling, so the footprints shown here apply to either.
+            Level-1C is top-of-atmosphere reflectance; Level-2A adds an atmospheric correction to give
+            bottom-of-atmosphere surface reflectance, which is what most land-surface analysis starts from.</p>
+
+        <h3>Can I use the exported footprints in my own work?</h3>
+        <p>Yes. The tile geometries are derived from ESA's publicly published Sentinel-2 tiling grid, and
+            this tool is released under the MIT licence. Please check ESA's terms if you redistribute the
+            underlying grid itself.</p>
+
+        <h2>About this project</h2>
+        <p>Sentinel-2 Grid Explorer is built and maintained by the Data Modelling and Analysis team at the
+            Department of Primary Industries and Regional Development (DPIRD), Western Australia. It is a
+            static site: HTML, CSS, Leaflet, and two GeoJSON files, with no backend and no tracking.</p>
+        <p>Source code, issue reporting, and the underlying datasets live in the
+            <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer" rel="noopener" target="_blank">project
+                repository on GitHub</a>. Bug reports and pull requests are welcome.</p>
+    </main>
+
+    <footer class="page-footer">
+        <p>Sentinel-2 Grid Explorer — built by
+            <a href="https://www.dpird.wa.gov.au/" rel="noopener" target="_blank">DPIRD</a> Data Modelling
+            and Analysis ·
+            <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer" rel="noopener" target="_blank">GitHub</a>
+            · Contains modified Copernicus Sentinel data. Sentinel-2 is a mission of the European Space
+            Agency; this site is not affiliated with or endorsed by ESA.</p>
+    </footer>
 
     <!-- Leaflet JavaScript -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <!-- Custom JavaScript -->
     <script src="script.js"></script>
-    <noscript>
-        <section class="noscript-content" aria-label="Sentinel-2 Grid Explorer no-script overview">
-            <h2>Sentinel-2 Grid Explorer requires JavaScript for the map</h2>
-            <p>This page provides an interactive Leaflet map of Sentinel-2 MGRS tile footprints. Enable
-                JavaScript to search tile IDs, select footprints, create share links, and export selections
-                as GeoJSON or CSV.</p>
-            <p>The project source and static datasets are available from the
-                <a href="https://github.com/DPIRD-DMA/Sentinel-2-grid-explorer">Sentinel-2 Grid Explorer
-                    GitHub repository</a>.</p>
-        </section>
-    </noscript>
 </body>
 
 </html>
